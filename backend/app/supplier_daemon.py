@@ -6,7 +6,7 @@ async def main():
     first = True
     while True:
         try:
-            result = await ingest_supplier(days=14 if first else 2)
+            result = await ingest_supplier(days=7 if first else 1)
             print(result, flush=True)
             first = False
         except Exception as exc:
