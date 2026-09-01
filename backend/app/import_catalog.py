@@ -2,7 +2,7 @@
 Импорт каталога через API Render
 Запуск: python -m backend.app.import_catalog
 """
-import json, sys, httpx
+import json, sys, asyncio, httpx
 from pathlib import Path
 
 API_URL = "https://normwear-api.onrender.com"
@@ -10,7 +10,6 @@ CATALOG_PATH = Path(__file__).parent.parent.parent / "catalog_optobaza.json"
 MARGIN = 1.35
 
 async def main():
-    import asyncio
 
     if not CATALOG_PATH.exists():
         print(f"Catalog not found: {CATALOG_PATH}", file=sys.stderr)
@@ -24,7 +23,7 @@ async def main():
     # get existing products
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(f"{API_URL}/api/products?limit=1000")
-        existing = {p["title"] for p in r.json()} if r.ok else set()
+        existing = {p["title"] for p in r.json()} if r.status_code == 200 else set()
         print(f"Existing in DB: {len(existing)}", file=sys.stderr)
 
     imported = 0
@@ -62,7 +61,7 @@ async def main():
 
             try:
                 r = await c.post(f"{API_URL}/api/products", json=payload)
-                if r.ok:
+                if r.status_code == 200:
                     imported += 1
                     existing.add(title)
                 else:
