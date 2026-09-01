@@ -336,6 +336,26 @@ async def menu_broadcast(call: CallbackQuery):
     await call.message.edit_text('📢 Напиши текст поста (поддерживает HTML: <b>жирный</b>, <i>курсив</i>):', reply_markup=kb)
     await call.answer()
 
+# ── ЛЮБОЕ ТЕКСТОВОЕ СООБЩЕНИЕ (не в стейте) ──
+
+@dp.message(F.text)
+async def on_text(message: Message):
+    if not allowed(message.from_user.id): return
+    uid = message.from_user.id
+    state = _user_state.get(uid)
+    if state:
+        return
+    await message.answer('NORMWEAR ADMIN', reply_markup=main_menu())
+
+# ── ФОТО / СТИКЕРЫ ──
+
+@dp.message(F.sticker | F.photo | F.animation | F.voice | F.video)
+async def on_media(message: Message):
+    if not allowed(message.from_user.id): return
+    if message.photo and message.reply_to_message:
+        return
+    await message.answer('Принимаю только текст.', reply_markup=back_menu())
+
 async def main():
     await dp.start_polling(Bot(settings.admin_bot_token))
 

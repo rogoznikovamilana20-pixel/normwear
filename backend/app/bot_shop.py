@@ -61,6 +61,66 @@ async def support_cb(call: CallbackQuery):
     )
     await call.answer()
 
+# ── ЛЮБОЕ ТЕКСТОВОЕ СООБЩЕНИЕ ──
+
+@dp.message(F.text)
+async def on_text(message: Message):
+    text = message.text.strip()
+
+    # попробовать как номер заказа
+    if text.isdigit():
+        oid = int(text)
+        async with SessionLocal() as db:
+            o = await db.scalar(select(Order).where(Order.id == oid, Order.telegram_user_id == message.from_user.id))
+        if o:
+            delivery = f"{float(o.delivery_cost):,.0f} ₽" if o.delivery_cost is not None else "уточняется"
+            total = f"{float(o.total):,.0f} ₽" if o.total is not None else "—"
+            status_emoji = {'awaiting_delivery': '📦', 'awaiting_payment': '💳', 'paid': '✅', 'shipped': '🚚'}.get(o.status, '📋')
+            await message.answer(
+                f'{status_emoji} <b>Заказ #{o.id}</b>\n'
+                f'Статус: {o.status}\n'
+                f'Товары: {float(o.subtotal):,.0f} ₽\n'
+                f'Доставка: {delivery}\n'
+                f'Итого: {total}',
+                parse_mode='HTML',
+                reply_markup=back_menu()
+            )
+            return
+
+    # попробовать как поиск по каталогу
+    async with SessionLocal() as db:
+        like = f"%{text}%"
+        rows = (await db.scalars(
+            select(Product).where(Product.status == 'published', Product.stock > 0, Product.title.ilike(like))
+            .order_by(Product.created_at.desc()).limit(5)
+        )).all()
+    if rows:
+        lines = []
+        kb_rows = []
+        for p in rows:
+            sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
+            lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
+            kb_rows.append([InlineKeyboardButton(text=f"🛍 {p.title[:30]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id)))])
+        kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
+        await message.answer(
+            f'🔍 По запросу «{text}» нашлось:\n\n' + '\n\n'.join(lines),
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        )
+        return
+
+    # ничего не нашлось — показать меню
+    await message.answer(
+        'Не нашёл такого. Вот что я умею:',
+        reply_markup=main_menu()
+    )
+
+# ── СТИКЕРЫ / ФОТО / ПРОЧЕЕ ──
+
+@dp.message(F.sticker | F.photo | F.animation | F.voice | F.video)
+async def on_media(message: Message):
+    await message.answer('Принимаю только текст. Вот меню:', reply_markup=main_menu())
+
 # ── КАТАЛОГ ──
 
 async def _send_catalog(target: Message | CallbackQuery, page: int):
@@ -86,7 +146,6 @@ async def _send_catalog(target: Message | CallbackQuery, page: int):
         sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
         lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
         kb_rows.append([InlineKeyboardButton(text=f"🛍 {p.title[:30]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id)))])
-    # pagination
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text='⬅️', callback_data=f'catalog:{page-1}'))
