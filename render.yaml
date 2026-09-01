@@ -41,6 +41,7 @@ services:
     name: normwear-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
 databases:
   - name: normwear-db
