@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, Favorite, PromoCode, Review, Shipment
+from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder
 
 dp = Dispatcher()
 
@@ -28,7 +28,8 @@ def main_menu():
         [InlineKeyboardButton(text='📦 Каталог', callback_data='catalog:0'),
          InlineKeyboardButton(text='📋 Мои заказы', callback_data='myorders:0')],
         [InlineKeyboardButton(text='❤️ Избранное', callback_data='favorites:0'),
-         InlineKeyboardButton(text='💬 Поддержка', callback_data='support')]
+         InlineKeyboardButton(text='💬 Поддержка', callback_data='support')],
+        [InlineKeyboardButton(text='🤝 Рефералка', callback_data='referral')],
     ])
 
 def back_menu():
@@ -38,6 +39,30 @@ def back_menu():
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    args = (message.text or '').split(maxsplit=1)
+    # реферальная ссылка
+    if len(args) > 1 and args[1].startswith('ref'):
+        try:
+            referrer_id = int(args[1][3:])
+            if referrer_id != message.from_user.id:
+                async with SessionLocal() as db:
+                    exists = await db.scalar(select(Referral).where(Referral.referred_id == message.from_user.id))
+                    if not exists:
+                        cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
+                        bonus = float(cfg.bonus_amount) if cfg else 500
+                        ref = Referral(referrer_id=referrer_id, referred_id=message.from_user.id, bonus_amount=bonus, status='pending')
+                        db.add(ref)
+                        await db.commit()
+                        # уведомить реферера
+                        from aiogram import Bot
+                        bot = Bot(settings.shop_bot_token)
+                        try:
+                            await bot.send_message(referrer_id, f'🎉 По твоей ссылке зарегистрировался друг! Бонус {bonus:,.0f} ₽ будет начислен после его первого заказа.')
+                        except Exception:
+                            pass
+                        await bot.session.close()
+        except Exception:
+            pass
     await message.answer(
         'Добро пожаловать в <b>NORMWEAR</b>.\n\n'
         'Вся витрина и заказ — внутри Telegram.',
@@ -238,6 +263,33 @@ async def show_favorites(call: CallbackQuery):
         await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
     except Exception:
         await call.message.answer(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+# ── РЕФЕРАЛКА ──
+
+@dp.callback_query(F.data == 'referral')
+async def referral_menu(call: CallbackQuery):
+    user_id = call.from_user.id
+    bot_username = (await Bot(settings.shop_bot_token).get_me()).username
+    link = f'https://t.me/{bot_username}?start=ref{user_id}'
+    async with SessionLocal() as db:
+        cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
+        bonus = float(cfg.bonus_amount) if cfg else 500
+        invited = await db.scalar(select(func.count(Referral.id)).where(Referral.referrer_id == user_id)) or 0
+        paid = await db.scalar(select(func.count(Referral.id)).where(Referral.referrer_id == user_id, Referral.status == 'paid')) or 0
+        total_bonus = await db.scalar(select(func.coalesce(func.sum(Referral.bonus_amount), 0)).where(Referral.referrer_id == user_id, Referral.status == 'paid')) or 0
+    text = (f'🤝 <b>Реферальная программа</b>\n\n'
+            f'Приглашай друзей и получай <b>{bonus:,.0f} ₽</b> за каждого!\n'
+            f'Бонус начисляется после первого заказа друга.\n\n'
+            f'Твоя ссылка:\n<code>{link}</code>\n\n'
+            f'Приглашено: {invited}\n'
+            f'Оплачено: {paid}\n'
+            f'Бонусов получено: {float(total_bonus):,.0f} ₽')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📤 Поделиться ссылкой', url=f'https://t.me/share/url?url={link}')],
+        [InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')]
+    ])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
     await call.answer()
 
 # ── КАТАЛОГ ──

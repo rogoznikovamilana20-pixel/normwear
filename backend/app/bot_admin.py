@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder
 from .publisher import ChannelPublisher
 import json
 
@@ -25,6 +25,8 @@ def main_menu():
          InlineKeyboardButton(text='📢 Рассылка', callback_data='menu:broadcast')],
         [InlineKeyboardButton(text='🏷 Промокоды', callback_data='menu:promos'),
          InlineKeyboardButton(text='⭐ Отзывы', callback_data='menu:reviews')],
+        [InlineKeyboardButton(text='🤝 Рефералка', callback_data='menu:referrals'),
+         InlineKeyboardButton(text='🎯 Сегменты', callback_data='menu:segments')],
     ])
 
 def back_menu():
@@ -309,6 +311,56 @@ async def text_input(message: Message):
     elif state.startswith('awaiting_promo_'):
         _user_state.pop(uid, None)
         return
+
+    elif state.startswith('awaiting_broadcast_segment:'):
+        segment = state.split(':')[1]
+        _user_state.pop(uid, None)
+        raw = message.text.strip()
+        if len(raw) > 4000:
+            return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
+        from datetime import datetime, timedelta
+        now_dt = datetime.utcnow()
+        week_ago = now_dt - timedelta(weeks=1)
+        async with SessionLocal() as db:
+            if segment == 'buyers':
+                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
+            elif segment == 'non_buyers':
+                all_users = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
+                recent = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
+                user_ids = [u for u in all_users if u not in recent]
+            else:
+                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
+        if not user_ids:
+            return await message.answer('Нет пользователей в этом сегменте.', reply_markup=back_menu())
+        bot = Bot(settings.shop_bot_token)
+        sent, failed = 0, 0
+        for uid_seg in user_ids:
+            try:
+                await bot.send_message(uid_seg, raw, parse_mode='HTML')
+                sent += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                failed += 1
+        await bot.session.close()
+        await message.answer(f'✅ Отправлено: {sent}\n❌ Ошибки: {failed}', reply_markup=back_menu())
+
+    elif state == 'awaiting_ref_bonus':
+        try:
+            bonus = float(message.text.strip().replace(',', '.'))
+        except ValueError:
+            return await message.answer('Нужно число. Попробуй ещё:')
+        if bonus < 0 or bonus > 100000:
+            return await message.answer('Бонус 0-100000 ₽. Попробуй ещё:')
+        async with SessionLocal() as db:
+            cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
+            if cfg:
+                cfg.bonus_amount = bonus
+            else:
+                cfg = ReferralConfig(bonus_amount=bonus, active=True)
+                db.add(cfg)
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Бонус за реферала: {bonus:,.0f} ₽', reply_markup=back_menu())
 
     elif state == 'awaiting_broadcast':
         _user_state.pop(uid, None)
@@ -616,6 +668,72 @@ async def review_reject(call: CallbackQuery):
         await db.commit()
     await call.answer('❌ Скрыт')
     await call.message.edit_reply_markup(reply_markup=None)
+
+# ── РЕФЕРАЛКА ──
+
+@dp.callback_query(lambda c: c.data == 'menu:referrals')
+async def menu_referrals(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
+        total_ref = await db.scalar(select(func.count(Referral.id))) or 0
+        paid_ref = await db.scalar(select(func.count(Referral.id)).where(Referral.status == 'paid')) or 0
+        total_bonus = await db.scalar(select(func.coalesce(func.sum(Referral.bonus_amount), 0)).where(Referral.status == 'paid')) or 0
+    bonus = float(cfg.bonus_amount) if cfg else 500
+    text = (f'🤝 <b>Реферальная программа</b>\n\n'
+            f'Бонус за друга: {bonus:,.0f} ₽\n'
+            f'Всего рефералов: {total_ref}\n'
+            f'Оплачено: {paid_ref}\n'
+            f'Выдано бонусов: {float(total_bonus):,.0f} ₽')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='💰 Изменить бонус', callback_data='ref:set_bonus')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'ref:set_bonus')
+async def ref_set_bonus_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    _user_state[call.from_user.id] = 'awaiting_ref_bonus'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:referrals')]
+    ])
+    await call.message.edit_text('💰 Введи сумму бонуса за реферала (₽):', reply_markup=kb)
+    await call.answer()
+
+# ── СЕГМЕНТЫ ──
+
+@dp.callback_query(lambda c: c.data == 'menu:segments')
+async def menu_segments(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    week_ago = now - timedelta(weeks=1)
+    async with SessionLocal() as db:
+        buyers = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id))).where(Order.created_at >= week_ago)) or 0
+        total_users = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id)))) or 0
+        non_buyers = total_users - buyers
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f'🛒 Покупатели ({buyers})', callback_data='segment:buyers')],
+        [InlineKeyboardButton(text=f'❌ Не покупали ({non_buyers})', callback_data='segment:non_buyers')],
+        [InlineKeyboardButton(text='📢 Всем', callback_data='segment:all')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text('🎯 Выбери аудиторию для рассылки:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('segment:'))
+async def segment_selected(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    segment = call.data.split(':')[1]
+    _user_state[call.from_user.id] = f'awaiting_broadcast_segment:{segment}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:segments')]
+    ])
+    labels = {'buyers': 'покупателей', 'non_buyers': 'не покупавших', 'all': 'всех'}
+    await call.message.edit_text(f'📢 Напиши текст поста для {labels.get(segment, "аудитории")} (HTML):', reply_markup=kb)
+    await call.answer()
 
 @dp.message(F.reply_to_message)
 async def support_reply(message: Message):

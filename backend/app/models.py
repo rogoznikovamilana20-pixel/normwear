@@ -138,3 +138,18 @@ class CartReminder(Base):
     product_ids_json: Mapped[str] = mapped_column(Text)
     reminded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class Referral(Base):
+    __tablename__ = 'referrals'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    referrer_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    referred_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    bonus_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    status: Mapped[str] = mapped_column(String(16), default='pending')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class ReferralConfig(Base):
+    __tablename__ = 'referral_config'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bonus_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=500)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
