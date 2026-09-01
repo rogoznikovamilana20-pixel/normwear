@@ -121,3 +121,20 @@ class SupportTicket(Base):
     admin_message_id: Mapped[int] = mapped_column(Integer)
     user_message_id: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class Shipment(Base):
+    __tablename__ = 'shipments'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey('orders.id', ondelete='CASCADE'), index=True)
+    carrier: Mapped[str] = mapped_column(String(32))
+    tracking_number: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), default='registered')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class CartReminder(Base):
+    __tablename__ = 'cart_reminders'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    product_ids_json: Mapped[str] = mapped_column(Text)
+    reminded: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -6,11 +6,12 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, Favorite, PromoCode
+from .models import Product, Order, Favorite, PromoCode, Review, Shipment
 
 dp = Dispatcher()
 
 _support_mode: dict[int, bool] = {}
+_review_state: dict[int, str] = {}
 
 def _miniapp_url(product_id: int | None = None) -> str:
     base = settings.miniapp_url_template.split('?')[0]
@@ -72,6 +73,25 @@ async def support_cb(call: CallbackQuery):
 @dp.message(F.text)
 async def on_text(message: Message):
     text = message.text.strip()
+
+    # отзыв — ввод текста
+    state = _review_state.get(message.from_user.id)
+    if state and state.startswith('review_text:'):
+        parts = state.split(':')
+        oid, rating = int(parts[1]), int(parts[2])
+        _review_state.pop(message.from_user.id, None)
+        async with SessionLocal() as db:
+            order = await db.get(Order, oid)
+            product_id = 0
+            if order:
+                items = (await db.scalars(select(OrderItem).where(OrderItem.order_id == oid))).all()
+                if items:
+                    product_id = items[0].product_id
+            review = Review(user_telegram_id=message.from_user.id, product_id=product_id, order_id=oid, rating=rating, text=text, status='pending')
+            db.add(review)
+            await db.commit()
+        await message.answer(f'✅ Спасибо за отзыв! {"⭐" * rating}', reply_markup=main_menu())
+        return
 
     # поддержка — переслать админам
     if _support_mode.get(message.from_user.id):
@@ -301,11 +321,13 @@ async def _send_myorders(target: Message | CallbackQuery, page: int = 0):
             await target.answer('Больше заказов нет', show_alert=True)
         return
     lines = []
+    kb_rows = []
     for o in rows:
-        status_emoji = {'awaiting_delivery': '📦', 'awaiting_payment': '💳', 'paid': '✅', 'shipped': '🚚'}.get(o.status, '📋')
+        status_emoji = {'awaiting_delivery': '📦', 'awaiting_payment': '💳', 'paid': '✅', 'shipped': '🚚', 'assembling': '🔧', 'delivered': '🏁', 'in_transit': '🛵'}.get(o.status, '📋')
         delivery = f"{float(o.delivery_cost):,.0f} ₽" if o.delivery_cost is not None else "уточняется"
         total = f"{float(o.total):,.0f} ₽" if o.total is not None else "—"
-        lines.append(f"{status_emoji} #{o.id} — товары {float(o.subtotal):,.0f} ₽\nДоставка: {delivery} — Итого: {total}")
+        lines.append(f"{status_emoji} #{o.id} — {float(o.subtotal):,.0f} ₽ — {total}")
+        kb_rows.append([InlineKeyboardButton(text=f'{status_emoji} #{o.id} — {total}', callback_data=f'myorder:{o.id}')])
     text = f"📋 <b>Ваши заказы</b>\n\n" + "\n\n".join(lines)
     nav = []
     if page > 0:
@@ -313,7 +335,8 @@ async def _send_myorders(target: Message | CallbackQuery, page: int = 0):
     nav.append(InlineKeyboardButton(text=f'📄 {page+1}', callback_data='noop'))
     if nxt:
         nav.append(InlineKeyboardButton(text='➡️', callback_data=f'myorders:{page+1}'))
-    kb_rows = [nav, [InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')]]
+    kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     if is_cb:
         try:
@@ -331,6 +354,77 @@ async def myorders_cb(call: CallbackQuery):
     except Exception:
         page = 0
     await _send_myorders(call, page)
+
+@dp.callback_query(F.data.startswith('myorder:'))
+async def myorder_detail(call: CallbackQuery):
+    oid = int(call.data.split(':')[1])
+    async with SessionLocal() as db:
+        o = await db.get(Order, oid)
+        if not o or o.telegram_user_id != call.from_user.id:
+            return await call.answer('Заказ не найден', show_alert=True)
+        items = (await db.scalars(select(OrderItem).where(OrderItem.order_id == oid))).all()
+        shipments = (await db.scalars(select(Shipment).where(Shipment.order_id == oid))).all()
+        reviews = (await db.scalars(select(Review).where(Review.order_id == oid, Review.user_telegram_id == call.from_user.id))).all()
+    items_text = "\n".join(f"  {i.title} {f'({i.size})' if i.size else ''} x{i.quantity}" for i in items)
+    status_emoji = {'awaiting_delivery': '📦', 'awaiting_payment': '💳', 'paid': '✅', 'shipped': '🚚', 'assembling': '🔧', 'delivered': '🏁', 'in_transit': '电动车'}.get(o.status, '📋')
+    deliv = f'{float(o.delivery_cost):,.0f} ₽' if o.delivery_cost is not None else 'уточняется'
+    total = f'{float(o.total):,.0f} ₽' if o.total else '—'
+    tracking_text = ""
+    if shipments:
+        s = shipments[-1]
+        tracking_text = f"\n📦 Доставка: {s.carrier}\n🔢 Трек: {s.tracking_number}"
+    text = (f'{status_emoji} <b>Заказ #{o.id}</b>\n'
+            f'Статус: {o.status}\n'
+            f'Товары:\n{items_text}\n\n'
+            f'Товары: {float(o.subtotal):,.0f} ₽\n'
+            f'Доставка: {deliv}\n'
+            f'Итого: {total}'
+            f'{tracking_text}')
+    kb_rows = []
+    if o.status == 'delivered' and not reviews:
+        kb_rows.append([InlineKeyboardButton(text='⭐ Оставить отзыв', callback_data=f'writereview:{o.id}')])
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='myorders:0')])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
+
+# ── ОТЗЫВЫ ──
+
+@dp.callback_query(F.data.startswith('writereview:'))
+async def write_review_start(call: CallbackQuery):
+    oid = int(call.data.split(':')[1])
+    _review_state[call.from_user.id] = f'review_rating:{oid}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='⭐', callback_data=f'setrating:{oid}:1'),
+         InlineKeyboardButton(text='⭐⭐', callback_data=f'setrating:{oid}:2'),
+         InlineKeyboardButton(text='⭐⭐⭐', callback_data=f'setrating:{oid}:3')],
+        [InlineKeyboardButton(text='⭐⭐⭐⭐', callback_data=f'setrating:{oid}:4'),
+         InlineKeyboardButton(text='⭐⭐⭐⭐⭐', callback_data=f'setrating:{oid}:5')],
+    ])
+    await call.message.edit_text('Оцени товар (нажми):', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(F.data.startswith('setrating:'))
+async def set_rating(call: CallbackQuery):
+    parts = call.data.split(':')
+    oid, rating = int(parts[1]), int(parts[2])
+    _review_state[call.from_user.id] = f'review_text:{oid}:{rating}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='Пропустить', callback_data=f'skipreview:{oid}:{rating}')]
+    ])
+    await call.message.edit_text(f'Оценка: {"⭐" * rating}\n\nНапиши отзыв (текст) или нажми «Пропустить»:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(F.data.startswith('skipreview:'))
+async def skip_review_text(call: CallbackQuery):
+    parts = call.data.split(':')
+    oid, rating = int(parts[1]), int(parts[2])
+    async with SessionLocal() as db:
+        review = Review(user_telegram_id=call.from_user.id, product_id=0, order_id=oid, rating=rating, status='pending')
+        db.add(review)
+        await db.commit()
+    _review_state.pop(call.from_user.id, None)
+    await call.message.edit_text('✅ Спасибо за оценку!', reply_markup=back_menu())
+    await call.answer()
 
 @dp.callback_query(F.data == 'noop')
 async def noop(call: CallbackQuery):

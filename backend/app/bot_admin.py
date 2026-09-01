@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment
 from .publisher import ChannelPublisher
 import json
 
@@ -23,7 +23,8 @@ def main_menu():
          InlineKeyboardButton(text='📋 Заказы', callback_data='menu:orders')],
         [InlineKeyboardButton(text='📊 Статистика', callback_data='menu:stats'),
          InlineKeyboardButton(text='📢 Рассылка', callback_data='menu:broadcast')],
-        [InlineKeyboardButton(text='🏷 Промокоды', callback_data='menu:promos')],
+        [InlineKeyboardButton(text='🏷 Промокоды', callback_data='menu:promos'),
+         InlineKeyboardButton(text='⭐ Отзывы', callback_data='menu:reviews')],
     ])
 
 def back_menu():
@@ -256,6 +257,23 @@ async def text_input(message: Message):
         _user_state.pop(uid, None)
         await message.answer(f'✅ Заказ #{oid}: доставка {cost:,.0f} ₽. Итого: {float(o.total):,.0f} ₽', reply_markup=back_menu())
 
+    elif state.startswith('awaiting_tracking_number:'):
+        parts = state.split(':')
+        oid, carrier = int(parts[1]), parts[2]
+        tracking = message.text.strip()
+        if len(tracking) < 3:
+            return await message.answer('Трек-номер слишком короткий. Попробуй ещё:')
+        async with SessionLocal() as db:
+            shipment = Shipment(order_id=oid, carrier=carrier, tracking_number=tracking, status='registered')
+            db.add(shipment)
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Трек-номер для #{oid}: {carrier} → {tracking}', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_tracking:'):
+        _user_state.pop(uid, None)
+        return
+
     elif state.startswith('awaiting_promo_code'):
         code = message.text.strip().upper()
         if len(code) < 3 or len(code) > 20:
@@ -360,7 +378,8 @@ async def order_detail(call: CallbackQuery):
          InlineKeyboardButton(text='🚚 Отправлен', callback_data=f'status:{o.id}:shipped')],
         [InlineKeyboardButton(text='🛵 В пути', callback_data=f'status:{o.id}:in_transit'),
          InlineKeyboardButton(text='✅ Доставлен', callback_data=f'status:{o.id}:delivered')],
-        [InlineKeyboardButton(text='🚚 Доставка (цена)', callback_data=f'setdelivery:{o.id}')],
+        [InlineKeyboardButton(text='🚚 Доставка (цена)', callback_data=f'setdelivery:{o.id}'),
+         InlineKeyboardButton(text='📦 Трек-номер', callback_data=f'settracking:{o.id}')],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:orders')],
     ])
     await call.message.edit_text(text, reply_markup=kb)
@@ -504,6 +523,99 @@ async def promo_create_start(call: CallbackQuery):
     ])
     await call.message.edit_text('🏷 Введи код промокода (латиница, без пробелов):', reply_markup=kb)
     await call.answer()
+
+# ── ТРЕКИНГ ДОСТАВКИ ──
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('settracking:'))
+async def set_tracking_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    oid = int(call.data.split(':')[1])
+    _user_state[call.from_user.id] = f'awaiting_tracking:{oid}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='CDEK', callback_data=f'tracking_carrier:{oid}:cdek'),
+         InlineKeyboardButton(text='Boxberry', callback_data=f'tracking_carrier:{oid}:boxberry')],
+        [InlineKeyboardButton(text='Почта', callback_data=f'tracking_carrier:{oid}:post'),
+         InlineKeyboardButton(text='Другое', callback_data=f'tracking_carrier:{oid}:other')],
+        [InlineKeyboardButton(text='❌ Отмена', callback_data=f'order:{oid}')],
+    ])
+    await call.message.edit_text(f'📦 Выбери службу доставки для #{oid}:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('tracking_carrier:'))
+async def tracking_carrier_selected(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    parts = call.data.split(':')
+    oid, carrier = int(parts[1]), parts[2]
+    _user_state[call.from_user.id] = f'awaiting_tracking_number:{oid}:{carrier}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data=f'order:{oid}')]
+    ])
+    await call.message.edit_text(f'📦 Введи трек-номер для #{oid} ({carrier}):', reply_markup=kb)
+    await call.answer()
+
+# ── ОТЗЫВЫ ──
+
+@dp.callback_query(lambda c: c.data == 'menu:reviews')
+async def menu_reviews(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        rows = (await db.scalars(select(Review).where(Review.status == 'pending').order_by(Review.id.desc()).limit(20))).all()
+    if not rows:
+        await call.message.edit_text('Нет отзывов на модерацию ✅', reply_markup=back_menu())
+        return await call.answer()
+    kb_rows = []
+    for r in rows:
+        stars = '⭐' * r.rating
+        kb_rows.append([InlineKeyboardButton(text=f'{stars} #{r.id} — товар #{r.product_id}', callback_data=f'review:{r.id}')])
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')])
+    await call.message.edit_text(f'⭐ Отзывы на модерацию ({len(rows)}):', reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('review:') and not c.data.startswith('review_'))
+async def review_detail(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    rid = int(call.data.split(':')[1])
+    async with SessionLocal() as db:
+        r = await db.get(Review, rid)
+        if not r: return await call.answer('Отзыв не найден', show_alert=True)
+        p = await db.get(Product, r.product_id)
+    stars = '⭐' * r.rating
+    text = (f'⭐ Отзыв #{r.id}\n'
+            f'Товар: #{r.product_id} {p.title if p else "?"}\n'
+            f'Оценка: {stars}\n'
+            f'Текст: {r.text or "—"}\n'
+            f'TG: {r.user_telegram_id}')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='✅ Опубликовать', callback_data=f'review_approve:{r.id}'),
+         InlineKeyboardButton(text='❌ Скрыть', callback_data=f'review_reject:{r.id}')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:reviews')],
+    ])
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('review_approve:'))
+async def review_approve(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    rid = int(call.data.split(':')[1])
+    async with SessionLocal() as db:
+        r = await db.get(Review, rid)
+        if not r: return await call.answer('Не найден', show_alert=True)
+        r.status = 'approved'
+        await db.commit()
+    await call.answer('✅ Опубликован')
+    await call.message.edit_reply_markup(reply_markup=None)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('review_reject:'))
+async def review_reject(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    rid = int(call.data.split(':')[1])
+    async with SessionLocal() as db:
+        r = await db.get(Review, rid)
+        if not r: return await call.answer('Не найден', show_alert=True)
+        r.status = 'rejected'
+        await db.commit()
+    await call.answer('❌ Скрыт')
+    await call.message.edit_reply_markup(reply_markup=None)
 
 @dp.message(F.reply_to_message)
 async def support_reply(message: Message):
