@@ -1,0 +1,23 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r backend/requirements.txt
+      - run: pytest backend/tests -v --tb=short
+        env:
+          SHOP_BOT_TOKEN: test
+          ADMIN_BOT_TOKEN: test
+          TELEGRAM_API_ID: "123"
+          TELEGRAM_API_HASH: testhash
+          ADMIN_TELEGRAM_IDS: "1977604257"
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config
+      - run: docker compose build

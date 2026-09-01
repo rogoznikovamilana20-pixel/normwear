@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: normwear
+      POSTGRES_USER: normwear
+      POSTGRES_PASSWORD: normwear
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U normwear -d normwear"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["8000:8000"]
+    volumes: [supplier_media:/app/media/supplier]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    command: sh -c "python -m app.init_db && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  shop_bot:
+    build: .
+    env_file: .env
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+    command: python -m app.bot_shop
+
+  admin_bot:
+    build: .
+    env_file: .env
+    depends_on:
+      api: {condition: service_healthy}
+    volumes: [supplier_media:/app/media/supplier]
+    restart: unless-stopped
+    command: python -m app.bot_admin
+
+  supplier_sync:
+    build: .
+    env_file: .env
+    depends_on:
+      api: {condition: service_healthy}
+    volumes: [supplier_media:/app/media/supplier]
+    restart: unless-stopped
+    command: python -m app.supplier_daemon
+
+volumes:
+  pgdata:
+  supplier_media:

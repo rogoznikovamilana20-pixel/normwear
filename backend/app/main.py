@@ -1,0 +1,253 @@
+import json
+from decimal import Decimal
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel
+from sqlalchemy import select
+from .db import SessionLocal
+from .models import Product, Order, OrderItem
+from .auth import validate_init_data
+from .config import settings
+
+def _rate_key(request: Request) -> str:
+    # prefer telegram user id from header if present, else IP
+    init = request.headers.get('x-telegram-init-data', '')
+    if init:
+        try:
+            data = validate_init_data(init)
+            uid = (data.get('user') or {}).get('id')
+            if uid:
+                return f"tg:{uid}"
+        except Exception:
+            pass
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=_rate_key, default_limits=[])
+
+app = FastAPI(title='NORMWEAR Commerce API', version='1.0.0')
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda r, e: JSONResponse(status_code=429, content={"detail": "Слишком много запросов, попробуйте позже"}))
+
+# CORS for Telegram Mini App + local dev
+allowed_origins = ["https://telegram.org", "https://web.telegram.org", "https://t.me"]
+# add domain from MINIAPP_URL_TEMPLATE if set
+try:
+    from urllib.parse import urlparse
+    _u = urlparse(settings.miniapp_url_template)
+    if _u.scheme and _u.netloc:
+        allowed_origins.append(f"{_u.scheme}://{_u.netloc}")
+except Exception:
+    pass
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.telegram\.org|https://.*\.t\.me|http://localhost.*|http://127\.0\.0\.1.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+import os as _os
+for _p in ('/app/miniapp/dist', '/app/miniapp', 'miniapp/dist', 'miniapp', '../miniapp/dist', '../miniapp'):
+    if _os.path.isdir(_p):
+        app.mount('/app', StaticFiles(directory=_p, html=True), name='miniapp')
+        break
+
+class CartLine(BaseModel):
+    product_id: int
+    quantity: int = 1
+    size: str | None = None
+
+class Checkout(BaseModel):
+    lines: list[CartLine]
+    name: str
+    phone: str
+    city: str
+    address: str
+    comment: str | None = None
+    payment_method: str = 'sbp'
+
+    def validate_fields(self):
+        for field in ('name', 'phone', 'city', 'address'):
+            val = getattr(self, field, '')
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f'Поле {field} обязательно')
+            if len(val.strip()) < 2:
+                raise ValueError(f'Поле {field} слишком короткое')
+        if len(self.phone.strip()) < 7:
+            raise ValueError('Укажите корректный телефон')
+
+@app.get('/health')
+async def health(): return {'status': 'ok'}
+
+@app.get('/metrics')
+async def metrics():
+    # simple prometheus-style metrics without extra deps
+    from sqlalchemy import func, select as sel
+    async with SessionLocal() as db:
+        p_cnt = await db.scalar(sel(func.count(Product.id))) or 0
+        o_cnt = await db.scalar(sel(func.count(Order.id))) or 0
+        pend = await db.scalar(sel(func.count(Product.id)).where(Product.status=='pending')) or 0
+        pub = await db.scalar(sel(func.count(Product.id)).where(Product.status=='published')) or 0
+        await_cnt = await db.scalar(sel(func.count(Order.id)).where(Order.status=='awaiting_delivery')) or 0
+    return {
+        "products_total": p_cnt,
+        "products_pending": pend,
+        "products_published": pub,
+        "orders_total": o_cnt,
+        "orders_awaiting_delivery": await_cnt,
+    }
+
+@app.get('/api/products')
+async def products(limit: int = 20, offset: int = 0, category: str | None = None, q: str | None = None):
+    if limit < 1: limit = 1
+    if limit > 100: limit = 100
+    if offset < 0: offset = 0
+    async with SessionLocal() as db:
+        stmt = select(Product).where(Product.status == 'published', Product.stock > 0)
+        if category and category != 'Все':
+            stmt = stmt.where(Product.category == category)
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            stmt = stmt.where(Product.title.ilike(like))
+        stmt = stmt.order_by(Product.created_at.desc()).limit(limit).offset(offset)
+        rows = (await db.scalars(stmt)).all()
+        # total for pagination header
+        from sqlalchemy import func
+        count_stmt = select(func.count()).select_from(Product).where(Product.status == 'published', Product.stock > 0)
+        if category and category != 'Все':
+            count_stmt = count_stmt.where(Product.category == category)
+        if q and q.strip():
+            count_stmt = count_stmt.where(Product.title.ilike(like))
+        total = await db.scalar(count_stmt) or 0
+    data = [{
+        'id': p.id, 'title': p.title, 'description': p.description or '', 'category': p.category,
+        'price': float(p.sale_price), 'stock': p.stock, 'sizes': json.loads(p.sizes_json),
+        'media': [f'/media/{p.id}/{i}' for i, _ in enumerate(json.loads(p.media_json))]
+    } for p in rows]
+    return JSONResponse(content=data, headers={"X-Total-Count": str(total), "X-Limit": str(limit), "X-Offset": str(offset)})
+
+@app.get('/api/products/{product_id}')
+async def product(product_id: int):
+    async with SessionLocal() as db: p = await db.get(Product, product_id)
+    if not p or p.status not in {'published','approved'}: raise HTTPException(404, 'Product not found')
+    return {'id':p.id,'title':p.title,'description':p.description or '', 'category':p.category,'price':float(p.sale_price),'stock':p.stock,'sizes':json.loads(p.sizes_json),'media':[f'/media/{p.id}/{i}' for i, _ in enumerate(json.loads(p.media_json))]}
+
+@app.get('/media/{product_id}/{index}')
+async def media(product_id: int, index: int):
+    async with SessionLocal() as db: p = await db.get(Product, product_id)
+    if not p: raise HTTPException(404, 'Product not found')
+    items = json.loads(p.media_json)
+    if index < 0 or index >= len(items): raise HTTPException(404, 'Media not found')
+    raw = items[index]
+    # sanitize: only allow paths inside media/supplier or /app/media/supplier
+    import pathlib
+    allowed_roots = [pathlib.Path('/app/media/supplier').resolve(), pathlib.Path('media/supplier').resolve(), pathlib.Path('backend/media/supplier').resolve()]
+    try:
+        target = pathlib.Path(raw).resolve()
+    except Exception:
+        raise HTTPException(404, 'Media not found')
+    if not any(str(target).startswith(str(r)) for r in allowed_roots) and not target.is_file():
+        # fallback: also allow exact stored path if file exists, otherwise 404
+        if not pathlib.Path(raw).is_file():
+            raise HTTPException(404, 'Media not found')
+        return FileResponse(raw)
+    if not target.is_file():
+        raise HTTPException(404, 'Media not found')
+    return FileResponse(str(target))
+
+@app.post('/api/session/validate')
+@limiter.limit("30/minute")
+async def validate(request: Request, x_telegram_init_data: str = Header(default='')):
+    try: return validate_init_data(x_telegram_init_data)
+    except ValueError as e: raise HTTPException(401, str(e))
+
+@app.post('/api/orders')
+@limiter.limit("5/minute")
+async def create_order(request: Request, checkout: Checkout, x_telegram_init_data: str = Header(default='')):
+    try:
+        init = validate_init_data(x_telegram_init_data)
+        user = init.get('user') or {}
+        telegram_user_id = int(user['id'])
+    except Exception as e:
+        raise HTTPException(401, f'Telegram authorization required: {e}')
+    try:
+        checkout.validate_fields()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not checkout.lines: raise HTTPException(400, 'Cart is empty')
+    # deduplicate lines by (product_id, size) to avoid double counting
+    merged: dict[tuple[int, str | None], int] = {}
+    for line in checkout.lines:
+        if line.quantity < 1 or line.quantity > 20: raise HTTPException(400, 'Invalid quantity')
+        key = (line.product_id, line.size)
+        merged[key] = merged.get(key, 0) + line.quantity
+        if merged[key] > 20: raise HTTPException(400, 'Invalid quantity')
+    async with SessionLocal() as db:
+        async with db.begin():
+            verified = []
+            subtotal = Decimal('0')
+            for (pid, size), qty in merged.items():
+                # row-level lock to prevent oversell
+                p = await db.scalar(select(Product).where(Product.id == pid).with_for_update())
+                if not p or p.status != 'published' or p.stock < qty: raise HTTPException(409, f'Product unavailable: {pid}')
+                if size and json.loads(p.sizes_json) and size not in json.loads(p.sizes_json): raise HTTPException(409, 'Invalid size')
+                subtotal += Decimal(str(p.sale_price)) * qty
+                verified.append((p, size, qty))
+            order = Order(telegram_user_id=telegram_user_id, status='awaiting_delivery', subtotal=subtotal, customer_name=checkout.name.strip(), phone=checkout.phone.strip(), city=checkout.city.strip(), address=checkout.address.strip(), comment=checkout.comment.strip() if checkout.comment else None, payment_method=checkout.payment_method)
+            db.add(order)
+            await db.flush()
+            for p, size, qty in verified:
+                db.add(OrderItem(order_id=order.id, product_id=p.id, title=p.title, size=size, quantity=qty, unit_price=p.sale_price))
+                p.stock -= qty
+            order_id = order.id
+            # need items for notification after commit
+            order_snapshot = {
+                "id": order_id,
+                "name": checkout.name.strip(),
+                "phone": checkout.phone.strip(),
+                "city": checkout.city.strip(),
+                "address": checkout.address.strip(),
+                "comment": checkout.comment.strip() if checkout.comment else "",
+                "subtotal": float(subtotal),
+                "tg_id": telegram_user_id,
+                "items": [(p.title, size, qty, float(p.sale_price)) for p, size, qty in verified],
+            }
+        # notify admins outside transaction (fire-and-forget)
+        try:
+            import asyncio
+            from aiogram import Bot
+            if settings.admin_ids:
+                text = (
+                    f"🛒 Новый заказ #{order_snapshot['id']}\n"
+                    f"👤 {order_snapshot['name']} | {order_snapshot['phone']}\n"
+                    f"📍 {order_snapshot['city']}, {order_snapshot['address']}\n"
+                    f"💬 {order_snapshot['comment'] or '-'}\n"
+                    f"TG: {order_snapshot['tg_id']}\n"
+                    f"Сумма товаров: {order_snapshot['subtotal']:,.0f} ₽\n"
+                    f"Товары:\n" + "\n".join(f" - {t} {f'({s})' if s else ''} x{qty} = {price:,.0f} ₽" for t, s, qty, price in order_snapshot['items']) +
+                    f"\n\n/delivery {order_snapshot['id']} COST — задать доставку"
+                )
+                async def _notify():
+                    bot = Bot(settings.admin_bot_token)
+                    for aid in settings.admin_ids:
+                        try:
+                            await bot.send_message(aid, text)
+                        except Exception:
+                            pass
+                    try:
+                        await bot.session.close()
+                    except Exception:
+                        pass
+                try:
+                    asyncio.create_task(_notify())
+                except RuntimeError:
+                    # no running loop (tests), run directly
+                    pass
+        except Exception:
+            pass
+        return {'order_id': order_id, 'subtotal': order_snapshot['subtotal'], 'delivery': None, 'total': None, 'status': 'awaiting_delivery', 'message': 'Заказ принят. Стоимость доставки уточнит менеджер.'}
