@@ -217,6 +217,8 @@ async def create_product(request: Request):
             if existing:
                 raise HTTPException(409, 'exists')
             p = Product(
+                supplier_chat='@optobaza',
+                supplier_message_id=0,
                 title=title,
                 description=body.get('description', ''),
                 category=body.get('category', ''),
