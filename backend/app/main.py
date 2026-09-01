@@ -203,6 +203,33 @@ async def media(product_id: int, index: int):
         raise HTTPException(404, 'Media not found')
     return FileResponse(str(target))
 
+@app.post('/api/products')
+@limiter.limit("60/minute")
+async def create_product(request: Request):
+    from .models import Product
+    body = await request.json()
+    title = body.get('title', '').strip()[:200]
+    if not title:
+        raise HTTPException(400, 'title required')
+    async with SessionLocal() as db:
+        existing = await db.scalar(select(Product).where(Product.title == title))
+        if existing:
+            raise HTTPException(409, 'exists')
+        p = Product(
+            title=title,
+            description=body.get('description', ''),
+            category=body.get('category', ''),
+            purchase_price=Decimal(str(body.get('purchase_price', 0))),
+            sale_price=Decimal(str(body.get('sale_price', 0))),
+            sizes_json=json.dumps(body.get('sizes_json', [])),
+            stock=body.get('stock', 1),
+            status='draft',
+        )
+        db.add(p)
+        await db.commit()
+        await db.refresh(p)
+        return {'id': p.id, 'title': p.title}
+
 @app.post('/api/session/validate')
 @limiter.limit("30/minute")
 async def validate(request: Request, x_telegram_init_data: str = Header(default='')):
