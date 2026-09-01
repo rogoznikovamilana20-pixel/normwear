@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder
+from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint
 
 dp = Dispatcher()
 
@@ -29,7 +29,8 @@ def main_menu():
          InlineKeyboardButton(text='📋 Мои заказы', callback_data='myorders:0')],
         [InlineKeyboardButton(text='❤️ Избранное', callback_data='favorites:0'),
          InlineKeyboardButton(text='💬 Поддержка', callback_data='support')],
-        [InlineKeyboardButton(text='🤝 Рефералка', callback_data='referral')],
+        [InlineKeyboardButton(text='🤝 Рефералка', callback_data='referral'),
+         InlineKeyboardButton(text='📍 Пункты выдачи', callback_data='pickups')],
     ])
 
 def back_menu():
@@ -290,6 +291,20 @@ async def referral_menu(call: CallbackQuery):
         [InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')]
     ])
     await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+# ── ПУНКТЫ ВЫДАЧИ ──
+
+@dp.callback_query(F.data == 'pickups')
+async def show_pickups(call: CallbackQuery):
+    async with SessionLocal() as db:
+        points = (await db.scalars(select(PickupPoint).where(PickupPoint.active == True).order_by(PickupPoint.id))).all()
+    if not points:
+        await call.message.edit_text('📍 Пункты выдачи пока не добавлены.', reply_markup=main_menu())
+    else:
+        lines = [f'📍 <b>{p.name}</b>\n🏠 {p.address}\n⏰ {p.work_hours or "—"}\n☎️ {p.phone or "—"}' for p in points]
+        text = '<b>Пункты выдачи:</b>\n\n' + '\n\n'.join(lines)
+        await call.message.edit_text(text, parse_mode='HTML', reply_markup=main_menu())
     await call.answer()
 
 # ── КАТАЛОГ ──

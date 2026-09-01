@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint
 from .publisher import ChannelPublisher
 import json
 
@@ -27,6 +27,8 @@ def main_menu():
          InlineKeyboardButton(text='⭐ Отзывы', callback_data='menu:reviews')],
         [InlineKeyboardButton(text='🤝 Рефералка', callback_data='menu:referrals'),
          InlineKeyboardButton(text='🎯 Сегменты', callback_data='menu:segments')],
+        [InlineKeyboardButton(text='📍 Пункты выдачи', callback_data='menu:pickups'),
+         InlineKeyboardButton(text='📥 Экспорт CSV', callback_data='menu:export')],
     ])
 
 def back_menu():
@@ -361,6 +363,31 @@ async def text_input(message: Message):
             await db.commit()
         _user_state.pop(uid, None)
         await message.answer(f'✅ Бонус за реферала: {bonus:,.0f} ₽', reply_markup=back_menu())
+
+    elif state == 'awaiting_pickup_name':
+        _user_state[uid] = f'awaiting_pickup_addr:{message.text.strip()}'
+        await message.answer('📍 Адрес:', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_addr:'):
+        name = state.split(':', 1)[1]
+        _user_state[uid] = f'awaiting_pickup_hours:{name}:{message.text.strip()}'
+        await message.answer('⏰ Часы работы (или —):', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_hours:'):
+        parts = state.split(':', 2)
+        name, addr = parts[1], parts[2]
+        _user_state[uid] = f'awaiting_pickup_phone:{name}:{addr}:{message.text.strip()}'
+        await message.answer('☎️ Телефон (или —):', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_phone:'):
+        parts = state.split(':', 3)
+        name, addr, hours = parts[1], parts[2], parts[3]
+        phone = message.text.strip() if message.text.strip() != '—' else None
+        async with SessionLocal() as db:
+            db.add(PickupPoint(name=name, address=addr, work_hours=hours if hours != '—' else None, phone=phone))
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Пункт «{name}» добавлен.', reply_markup=back_menu())
 
     elif state == 'awaiting_broadcast':
         _user_state.pop(uid, None)
@@ -771,6 +798,105 @@ async def on_text(message: Message):
     if state:
         return
     await message.answer('NORMWEAR ADMIN', reply_markup=main_menu())
+
+# ── ЭКСПОРТ CSV ──
+
+@dp.callback_query(lambda c: c.data == 'menu:export')
+async def menu_export(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📥 Все заказы', callback_data='export:all')],
+        [InlineKeyboardButton(text='📥 За месяц', callback_data='export:month')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text('📥 Экспорт заказов в CSV:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('export:'))
+async def export_csv(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    period = call.data.split(':')[1]
+    await call.answer('Формирую файл...')
+    from datetime import timedelta
+    import io
+    async with SessionLocal() as db:
+        q = select(Order).order_by(Order.created_at.desc())
+        if period == 'month':
+            month_ago = datetime.utcnow() - timedelta(days=30)
+            q = q.where(Order.created_at >= month_ago)
+        orders = (await db.scalars(q)).all()
+        if not orders:
+            return await call.message.edit_text('Нет заказов за этот период.', reply_markup=back_menu())
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(['ID', 'Телефон', 'Сумма', 'Скидка', 'Статус', 'Трек', 'Дата'])
+        for o in orders:
+            w.writerow([
+                o.id, o.phone, float(o.total_amount), float(o.discount_amount),
+                o.status, o.tracking_number or '', o.created_at.strftime('%Y-%m-%d %H:%M'),
+            ])
+        buf.seek(0)
+        content = buf.getvalue().encode('utf-8-sig')
+    from aiogram.types import BufferedInputFile
+    await call.message.answer_document(
+        BufferedInputFile(content, filename=f'orders_{period}.csv'),
+        caption=f'📥 Заказов: {len(orders)}',
+    )
+    await call.message.edit_text('✅ Файл отправлен.', reply_markup=back_menu())
+
+# ── ПУНКТЫ ВЫДАЧИ ──
+
+@dp.callback_query(lambda c: c.data == 'menu:pickups')
+async def menu_pickups(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        points = (await db.scalars(select(PickupPoint).where(PickupPoint.active == True).order_by(PickupPoint.id))).all()
+    lines = []
+    for p in points:
+        lines.append(f'<b>{p.name}</b>\n{p.address}\n⏰ {p.work_hours or "—"} ☎️ {p.phone or "—"}')
+    text = '📍 <b>Пункты выдачи</b>\n\n' + ('\n\n'.join(lines) if lines else 'Пока нет ни одного пункта.')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='➕ Добавить', callback_data='pickup:add')],
+        [InlineKeyboardButton(text='🗑 Удалить', callback_data='pickup:del')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'pickup:add')
+async def pickup_add_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    _user_state[call.from_user.id] = 'awaiting_pickup_name'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:pickups')]
+    ])
+    await call.message.edit_text('📍 Название пункта выдачи:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'pickup:del')
+async def pickup_del_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        points = (await db.scalars(select(PickupPoint).where(PickupPoint.active == True))).all()
+    if not points:
+        return await call.message.edit_text('Нет пунктов для удаления.', reply_markup=back_menu())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f'🗑 {p.name}', callback_data=f'pickup:rm:{p.id}')] for p in points
+    ] + [[InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:pickups')]])
+    await call.message.edit_text('Выбери пункт для удаления:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('pickup:rm:'))
+async def pickup_rm(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(PickupPoint, pid)
+        if p:
+            await db.delete(p)
+            await db.commit()
+    await call.answer('Удалён')
+    await call.message.edit_text('✅ Пункт удалён.', reply_markup=back_menu())
 
 # ── ФОТО / СТИКЕРЫ ──
 
