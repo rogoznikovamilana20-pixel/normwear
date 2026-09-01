@@ -64,20 +64,23 @@ async def _startup_bots():
         from .bot_shop import dp as shop_dp
         from .bot_admin import dp as admin_dp
         from aiogram import Bot
+        print("[startup] imports OK", flush=True)
         async def _run_shop():
             try:
                 bot = Bot(settings.shop_bot_token)
                 print("[shop_bot] starting polling", flush=True)
                 await shop_dp.start_polling(bot)
             except Exception as e:
-                print(f"[shop_bot] error {e}", flush=True)
+                import traceback; traceback.print_exc()
+                print(f"[shop_bot] FATAL {e}", flush=True)
         async def _run_admin():
             try:
                 bot = Bot(settings.admin_bot_token)
                 print("[admin_bot] starting polling", flush=True)
                 await admin_dp.start_polling(bot)
             except Exception as e:
-                print(f"[admin_bot] error {e}", flush=True)
+                import traceback; traceback.print_exc()
+                print(f"[admin_bot] FATAL {e}", flush=True)
         async def _run_supplier():
             try:
                 from .supplier_daemon import main as sup_main

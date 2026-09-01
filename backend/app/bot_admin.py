@@ -349,7 +349,7 @@ async def on_text(message: Message):
 
 # ── ФОТО / СТИКЕРЫ ──
 
-@dp.message(F.sticker | F.photo | F.animation | F.voice | F.video)
+@dp.message(F.sticker | F.photo)
 async def on_media(message: Message):
     if not allowed(message.from_user.id): return
     if message.photo and message.reply_to_message:

@@ -117,7 +117,7 @@ async def on_text(message: Message):
 
 # ── СТИКЕРЫ / ФОТО / ПРОЧЕЕ ──
 
-@dp.message(F.sticker | F.photo | F.animation | F.voice | F.video)
+@dp.message(F.sticker | F.photo)
 async def on_media(message: Message):
     await message.answer('Принимаю только текст. Вот меню:', reply_markup=main_menu())
 
