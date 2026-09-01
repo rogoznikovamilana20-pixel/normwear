@@ -3,7 +3,7 @@ import json, os
 from decimal import Decimal
 from sqlalchemy import select
 from .db import SessionLocal
-from .models import Product
+from .models import Product, BannedProduct
 from .supplier import SupplierWorker
 from .pricing import recommend_price
 from .market import MarketProvider, summarize
@@ -16,10 +16,22 @@ async def ingest_supplier(days: int = 14, provider: MarketProvider | None = None
     skipped = 0
     provider = provider or MarketProvider()
     published = 0
+    banned_skus = set()
+    banned_patterns = []
+    async with SessionLocal() as db:
+        for b in (await db.scalars(select(BannedProduct))).all():
+            if b.sku: banned_skus.add(b.sku)
+            if b.title_pattern: banned_patterns.append(b.title_pattern.lower())
     async with SessionLocal() as db:
         for parsed, media, post in items:
             exists = await db.scalar(select(Product).where(Product.supplier_message_id == post.message_id))
             if exists:
+                skipped += 1
+                continue
+            if parsed.sku and parsed.sku in banned_skus:
+                skipped += 1
+                continue
+            if any(pat in parsed.title.lower() for pat in banned_patterns):
                 skipped += 1
                 continue
             offers = await provider.search(parsed.brand, parsed.model, parsed.title)

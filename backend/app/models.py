@@ -64,6 +64,14 @@ class Order(Base):
     payment_status: Mapped[str] = mapped_column(String(32), default='unpaid')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class BannedProduct(Base):
+    __tablename__ = 'banned_products'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sku: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
+    title_pattern: Mapped[str | None] = mapped_column(String(255), index=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 class OrderItem(Base):
     __tablename__ = 'order_items'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
