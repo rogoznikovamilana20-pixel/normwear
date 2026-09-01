@@ -237,6 +237,47 @@ async def create_product(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={'detail': str(e)})
 
+@app.post('/api/products/bulk')
+async def bulk_create(request: Request):
+    from .models import Product
+    try:
+        body = await request.json()
+        items = body.get('products', [])
+        if not items or len(items) > 100:
+            raise HTTPException(400, 'products array required, max 100')
+        created = 0
+        skipped = 0
+        async with SessionLocal() as db:
+            for item in items:
+                title = str(item.get('title', '')).strip()[:200]
+                if not title:
+                    skipped += 1
+                    continue
+                existing = await db.scalar(select(Product).where(Product.title == title))
+                if existing:
+                    skipped += 1
+                    continue
+                p = Product(
+                    supplier_chat='@optobaza',
+                    supplier_message_id=0,
+                    title=title,
+                    description=str(item.get('description', ''))[:500],
+                    category=str(item.get('category', '')),
+                    purchase_price=float(item.get('purchase_price', 0)),
+                    sale_price=float(item.get('sale_price', 0)),
+                    sizes_json=json.dumps(item.get('sizes_json', [])),
+                    stock=min(int(item.get('stock', 1)), 100),
+                    status='draft',
+                )
+                db.add(p)
+                created += 1
+            await db.commit()
+        return {'created': created, 'skipped': skipped}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={'detail': str(e)})
+
 @app.post('/api/products/bulk-publish')
 @limiter.limit("5/minute")
 async def bulk_publish(request: Request):
