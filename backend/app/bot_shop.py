@@ -135,16 +135,16 @@ async def on_text(message: Message):
             .order_by(Product.created_at.desc()).limit(5)
         )).all()
     if rows:
-    lines = []
-    kb_rows = []
-    for p in rows:
-        sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
-        lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
-        kb_rows.append([
-            InlineKeyboardButton(text=f"🛍 {p.title[:25]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id))),
-        ])
-        kb_rows.append([InlineKeyboardButton(text='❤️ В избранное', callback_data=f'fav:{p.id}')])
-        kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
+        lines = []
+        kb_rows = []
+        for p in rows:
+            sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
+            lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
+            kb_rows.append([
+                InlineKeyboardButton(text=f"🛍 {p.title[:25]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id))),
+            ])
+            kb_rows.append([InlineKeyboardButton(text='❤️ В избранное', callback_data=f'fav:{p.id}')])
+            kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
         await message.answer(
             f'🔍 По запросу «{text}» нашлось:\n\n' + '\n\n'.join(lines),
             parse_mode='HTML',
