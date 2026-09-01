@@ -20,3 +20,5 @@ COPY miniapp ./miniapp
 COPY --from=frontend /build/miniapp/dist ./miniapp/dist
 RUN mkdir -p /app/media/supplier && \
     if [ -f /app/miniapp/dist/index.html ]; then echo "using vite dist"; cp -r /app/miniapp/dist/* /app/miniapp/ 2>/dev/null || true; fi
+EXPOSE 8000
+CMD sh -c "python -m app.init_db && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
