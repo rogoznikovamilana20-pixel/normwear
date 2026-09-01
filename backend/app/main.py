@@ -51,11 +51,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-import os as _os
+import os as _os, asyncio
 for _p in ('/app/miniapp/dist', '/app/miniapp', 'miniapp/dist', 'miniapp', '../miniapp/dist', '../miniapp'):
     if _os.path.isdir(_p):
         app.mount('/app', StaticFiles(directory=_p, html=True), name='miniapp')
         break
+
+@app.on_event("startup")
+async def _startup_bots():
+    # run shop/admin bots and supplier daemon inside same process (Render free single web)
+    try:
+        from .bot_shop import dp as shop_dp
+        from .bot_admin import dp as admin_dp
+        from aiogram import Bot
+        async def _run_shop():
+            try:
+                bot = Bot(settings.shop_bot_token)
+                print("[shop_bot] starting polling", flush=True)
+                await shop_dp.start_polling(bot)
+            except Exception as e:
+                print(f"[shop_bot] error {e}", flush=True)
+        async def _run_admin():
+            try:
+                bot = Bot(settings.admin_bot_token)
+                print("[admin_bot] starting polling", flush=True)
+                await admin_dp.start_polling(bot)
+            except Exception as e:
+                print(f"[admin_bot] error {e}", flush=True)
+        async def _run_supplier():
+            try:
+                from .supplier_daemon import main as sup_main
+                print("[supplier] starting", flush=True)
+                await sup_main()
+            except Exception as e:
+                print(f"[supplier] error {e}", flush=True)
+        # only start if tokens look valid
+        if settings.shop_bot_token and len(settings.shop_bot_token) > 20:
+            asyncio.create_task(_run_shop())
+        if settings.admin_bot_token and len(settings.admin_bot_token) > 20:
+            asyncio.create_task(_run_admin())
+        # supplier needs mtproto, but webscrape fallback works without
+        asyncio.create_task(_run_supplier())
+        print("[startup] bots+supplier scheduled", flush=True)
+    except Exception as e:
+        print(f"[startup] failed {e}", flush=True)
 
 class CartLine(BaseModel):
     product_id: int

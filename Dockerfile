@@ -20,6 +20,5 @@ COPY miniapp ./miniapp
 COPY --from=frontend /build/miniapp/dist ./miniapp/dist
 RUN mkdir -p /app/media/supplier && \
     if [ -f /app/miniapp/dist/index.html ]; then echo "using vite dist"; cp -r /app/miniapp/dist/* /app/miniapp/ 2>/dev/null || true; fi
-RUN printf '#!/bin/sh\nset -e\npython -m app.init_db\nuvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} &\npython -m app.bot_shop 2>&1 | sed \"s/^/[shop_bot] /\" &\npython -m app.bot_admin 2>&1 | sed \"s/^/[admin_bot] /\" &\npython -m app.supplier_daemon 2>&1 | sed \"s/^/[supplier] /\" &\nwait\n' > /app/start.sh && chmod +x /app/start.sh
 EXPOSE 8000
-CMD ["/app/start.sh"]
+CMD sh -c "python -m app.init_db && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
