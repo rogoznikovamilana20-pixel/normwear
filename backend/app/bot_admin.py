@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem
 from .publisher import ChannelPublisher
 import json
 
@@ -23,6 +23,7 @@ def main_menu():
          InlineKeyboardButton(text='📋 Заказы', callback_data='menu:orders')],
         [InlineKeyboardButton(text='📊 Статистика', callback_data='menu:stats'),
          InlineKeyboardButton(text='📢 Рассылка', callback_data='menu:broadcast')],
+        [InlineKeyboardButton(text='🏷 Промокоды', callback_data='menu:promos')],
     ])
 
 def back_menu():
@@ -159,7 +160,38 @@ async def set_stock_start(call: CallbackQuery):
     await call.message.edit_text(f'📦 Введи новый остаток для #{pid} (число):', reply_markup=kb)
     await call.answer()
 
-# ── ОБРАБОТКА ВВОДА (цена, остаток, доставка, рассылка) ──
+# ── ПРОМОКОДЫ (создание пошагово) ──
+
+async def _handle_promo_state(uid: int, state: str, message: Message):
+    if state == 'awaiting_promo_code':
+        code = message.text.strip().upper()
+        if len(code) < 3 or len(code) > 20:
+            return await message.answer('Код 3-20 символов. Попробуй ещё:')
+        async with SessionLocal() as db:
+            exists = await db.scalar(select(PromoCode).where(PromoCode.code == code))
+        if exists:
+            return await message.answer('Такой код уже есть. Попробуй другой:')
+        _user_state[uid] = f'awaiting_promo_type:{code}'
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='-percent %', callback_data=f'promotype:{code}:percent'),
+             InlineKeyboardButton(text='fixed ₽', callback_data=f'promotype:{code}:fixed')],
+        ])
+        await message.answer(f'Код: <code>{code}</code>\nТип скидки:', parse_mode='HTML', reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('promotype:'))
+async def promo_type_selected(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    parts = call.data.split(':')
+    code, dtype = parts[1], parts[2]
+    _user_state[call.from_user.id] = f'awaiting_promo_value:{code}:{dtype}'
+    label = '% (процент)' if dtype == 'percent' else '₽ (сумма)'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:promos')]
+    ])
+    await call.message.edit_text(f'Код: <code>{code}</code>\nТип: {dtype}\n\nВведи значение скидки (число {label}):', parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+# ── ОБРАБОТКА ВВОДА (цена, остаток, доставка, промокоды, рассылка) ──
 
 @dp.message()
 async def text_input(message: Message):
@@ -224,6 +256,27 @@ async def text_input(message: Message):
         _user_state.pop(uid, None)
         await message.answer(f'✅ Заказ #{oid}: доставка {cost:,.0f} ₽. Итого: {float(o.total):,.0f} ₽', reply_markup=back_menu())
 
+    elif state.startswith('awaiting_promo_'):
+        _user_state.pop(uid, None)
+        return
+
+    elif state.startswith('awaiting_promo_value:'):
+        parts = state.split(':')
+        code, dtype = parts[1], parts[2]
+        try:
+            value = float(message.text.strip().replace(',', '.'))
+        except ValueError:
+            return await message.answer('Нужно число. Попробуй ещё:')
+        if value <= 0 or value > 100:
+            return await message.answer('Значение 0-100. Попробуй ещё:')
+        async with SessionLocal() as db:
+            promo = PromoCode(code=code, discount_type=dtype, discount_value=value, active=True)
+            db.add(promo)
+            await db.commit()
+        _user_state.pop(uid, None)
+        disc = f'{value}%' if dtype == 'percent' else f'{value:,.0f} ₽'
+        await message.answer(f'✅ Промокод <code>{code}</code> создан: {disc}', parse_mode='HTML', reply_markup=back_menu())
+
     elif state == 'awaiting_broadcast':
         _user_state.pop(uid, None)
         now = time.time()
@@ -268,18 +321,17 @@ async def menu_orders(call: CallbackQuery):
 async def order_detail(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
     oid = int(call.data.split(':')[1])
+    from .models import OrderItem as OI
     async with SessionLocal() as db:
         o = await db.get(Order, oid)
         if not o: return await call.answer('Заказ не найден', show_alert=True)
-        items = (await db.scalars(select(Product).join(OrderItem, OrderItem.product_id == Product.id).where(OrderItem.order_id == oid))).all() if False else []
-    from .models import OrderItem as OI
-    async with SessionLocal() as db:
         items = (await db.scalars(select(OI).where(OI.order_id == oid))).all()
     items_text = "\n".join(f"  {i.title} {f'({i.size})' if i.size else ''} x{i.quantity} = {float(i.unit_price) * i.quantity:,.0f} ₽" for i in items)
     deliv = f'{float(o.delivery_cost):,.0f} ₽' if o.delivery_cost is not None else 'уточняется'
     total = f'{float(o.total):,.0f} ₽' if o.total else '—'
+    status_emoji = {'awaiting_delivery': '📦', 'awaiting_payment': '💳', 'paid': '✅', 'shipped': '🚚', 'assembling': '🔧', 'delivered': '🏁'}.get(o.status, '📋')
     text = (f'📋 Заказ #{o.id}\n'
-            f'Статус: {o.status}\n'
+            f'Статус: {status_emoji} {o.status}\n'
             f'👤 {o.customer_name} | {o.phone}\n'
             f'📍 {o.city}, {o.address}\n'
             f'💬 {o.comment or "-"}\n'
@@ -289,11 +341,45 @@ async def order_detail(call: CallbackQuery):
             f'Доставка: {deliv}\n'
             f'Итого: {total}')
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='🚚 Задать доставку', callback_data=f'setdelivery:{o.id}')],
+        [InlineKeyboardButton(text='🔧 Собирается', callback_data=f'status:{o.id}:assembling'),
+         InlineKeyboardButton(text='🚚 Отправлен', callback_data=f'status:{o.id}:shipped')],
+        [InlineKeyboardButton(text='🛵 В пути', callback_data=f'status:{o.id}:in_transit'),
+         InlineKeyboardButton(text='✅ Доставлен', callback_data=f'status:{o.id}:delivered')],
+        [InlineKeyboardButton(text='🚚 Доставка (цена)', callback_data=f'setdelivery:{o.id}')],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:orders')],
     ])
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('status:'))
+async def change_status(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    parts = call.data.split(':')
+    oid, new_status = int(parts[1]), parts[2]
+    status_labels = {
+        'assembling': '🔧 Собирается',
+        'shipped': '🚚 Отправлен',
+        'in_transit': '🛵 В пути',
+        'delivered': '✅ Доставлен',
+    }
+    async with SessionLocal() as db:
+        o = await db.get(Order, oid)
+        if not o: return await call.answer('Заказ не найден', show_alert=True)
+        o.status = new_status
+        await db.commit()
+    # уведомить клиента
+    try:
+        bot = Bot(settings.shop_bot_token)
+        await bot.send_message(
+            o.telegram_user_id,
+            f'📦 Заказ #{oid}\n\nСтатус изменён: <b>{status_labels.get(new_status, new_status)}</b>',
+            parse_mode='HTML',
+        )
+        await bot.session.close()
+    except Exception:
+        pass
+    await call.answer(f'✅ {status_labels.get(new_status, new_status)}')
+    await call.message.edit_reply_markup(reply_markup=None)
 
 @dp.callback_query(lambda c: c.data and c.data.startswith('setdelivery:'))
 async def set_delivery_start(call: CallbackQuery):
@@ -311,17 +397,52 @@ async def set_delivery_start(call: CallbackQuery):
 @dp.callback_query(lambda c: c.data == 'menu:stats')
 async def menu_stats(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📅 Сегодня', callback_data='stats:day'),
+         InlineKeyboardButton(text='📅 Неделя', callback_data='stats:week')],
+        [InlineKeyboardButton(text='📅 Месяц', callback_data='stats:month'),
+         InlineKeyboardButton(text='📅 Всё время', callback_data='stats:all')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text('📊 Выбери период:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('stats:'))
+async def stats_period(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    period = call.data.split(':')[1]
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if period == 'day': since = now - timedelta(days=1)
+    elif period == 'week': since = now - timedelta(weeks=1)
+    elif period == 'month': since = now - timedelta(days=30)
+    else: since = None
     async with SessionLocal() as db:
-        products = await db.scalar(select(func.count(Product.id))) or 0
-        orders = await db.scalar(select(func.count(Order.id))) or 0
-        revenue = await db.scalar(select(func.coalesce(func.sum(Order.subtotal), 0))) or 0
-        pending = await db.scalar(select(func.count(Product.id)).where(Product.status == 'pending')) or 0
-        published = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
-    text = (f'📊 Статистика\n\n'
-            f'Товаров: {products} (ожидают: {pending}, опубликованы: {published})\n'
-            f'Заказов: {orders}\n'
-            f'Выручка: {float(revenue):,.0f} ₽')
-    await call.message.edit_text(text, reply_markup=back_menu())
+        from .models import OrderItem as OI
+        stmt = select(func.count(Order.id), func.coalesce(func.sum(Order.subtotal), 0))
+        if since:
+            stmt = stmt.where(Order.created_at >= since)
+        result = (await db.execute(stmt)).one()
+        orders_count, revenue = result[0], float(result[1])
+        avg_check = revenue / orders_count if orders_count else 0
+        # топ-3 товара
+        top_stmt = (select(OI.title, func.sum(OI.quantity).label('qty'))
+            .group_by(OI.title).order_by(func.sum(OI.quantity).desc()).limit(3))
+        if since:
+            from .models import Order as O2
+            top_stmt = top_stmt.join(O2, O2.id == OI.order_id).where(O2.created_at >= since)
+        top_rows = (await db.execute(top_stmt)).all()
+    period_labels = {'day': 'Сегодня', 'week': 'Неделя', 'month': 'Месяц', 'all': 'Всё время'}
+    top_text = "\n".join(f"  {i+1}. {t} — {q} шт." for i, (t, q) in enumerate(top_rows)) or "  Нет продаж"
+    text = (f'📊 <b>{period_labels[period]}</b>\n\n'
+            f'Заказов: {orders_count}\n'
+            f'Выручка: {revenue:,.0f} ₽\n'
+            f'Средний чек: {avg_check:,.0f} ₽\n\n'
+            f'🏆 Топ товары:\n{top_text}')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:stats')]
+    ])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
     await call.answer()
 
 # ── РАССЫЛКА ──
@@ -336,7 +457,38 @@ async def menu_broadcast(call: CallbackQuery):
     await call.message.edit_text('📢 Напиши текст поста (поддерживает HTML: <b>жирный</b>, <i>курсив</i>):', reply_markup=kb)
     await call.answer()
 
-# ── ОТВЕТ НА СООБЩЕНИЕ ПОДДЕРЖКИ ──
+# ── ПРОМОКОДЫ ──
+
+@dp.callback_query(lambda c: c.data == 'menu:promos')
+async def menu_promos(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        rows = (await db.scalars(select(PromoCode).order_by(PromoCode.id.desc()).limit(20))).all()
+    if not rows:
+        text = 'Нет промокодов.'
+    else:
+        lines = []
+        for p in rows:
+            emoji = '✅' if p.active else '❌'
+            disc = f'{float(p.discount_value)}%' if p.discount_type == 'percent' else f'{float(p.discount_value):,.0f} ₽'
+            lines.append(f'{emoji} <code>{p.code}</code> — {disc} | использований: {p.used_count}/{p.max_uses}')
+        text = '🏷 <b>Промокоды</b>\n\n' + '\n'.join(lines)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='➕ Создать', callback_data='promo:create')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'promo:create')
+async def promo_create_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    _user_state[call.from_user.id] = 'awaiting_promo_code'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:promos')]
+    ])
+    await call.message.edit_text('🏷 Введи код промокода (латиница, без пробелов):', reply_markup=kb)
+    await call.answer()
 
 @dp.message(F.reply_to_message)
 async def support_reply(message: Message):

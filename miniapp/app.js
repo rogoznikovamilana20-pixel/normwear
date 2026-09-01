@@ -119,12 +119,17 @@ window.showCart = () => {
     </header>
     <main class="cart">${items.length ? items.map(x => `<div class="cartrow"><b>${esc(x.p.title)}</b><span>${x.qty} × ${money(x.p.price)}</span></div>`).join('') : '<div class="empty">Корзина пуста</div>'}</main>
     ${items.length ? `<div class="checkout">
-      <div class="total">Итого: <span>${money(total)}</span></div>
+      <div class="total">Итого: <span id="total-display">${money(total)}</span></div>
       <div class="form">
         <input id="c_name" placeholder="Имя" value="${esc(u?.first_name || '')}">
         <input id="c_phone" placeholder="Телефон +7..." inputmode="tel">
         <input id="c_city" placeholder="Город">
         <input id="c_address" placeholder="Адрес (улица, дом, кв)">
+        <div style="display:flex;gap:8px">
+          <input id="c_promo" placeholder="Промокод" style="flex:1">
+          <button onclick="applyPromo()" style="background:var(--accent);color:#000;border:0;border-radius:var(--radius-sm);padding:10px 14px;font-weight:700;cursor:pointer;font-family:inherit">ОК</button>
+        </div>
+        <div id="promo-result" style="font-size:13px;color:var(--accent);display:none"></div>
         <textarea id="c_comment" placeholder="Комментарий (необязательно)"></textarea>
       </div>
       <button class="checkoutbtn" onclick="checkout()">Оформить заказ</button>
@@ -134,13 +139,37 @@ window.showCart = () => {
 
 // ── CHECKOUT ──
 
+let promoDiscount = 0;
+
+window.applyPromo = async () => {
+  const code = document.getElementById('c_promo')?.value?.trim();
+  if (!code) return;
+  try {
+    const r = await fetch('/api/promo/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+      body: JSON.stringify({ code })
+    });
+    const d = await r.json();
+    const el = document.getElementById('promo-result');
+    if (!r.ok) { el.style.display = 'block'; el.style.color = '#ff4444'; el.textContent = d.detail || 'Ошибка'; promoDiscount = 0; return; }
+    el.style.display = 'block';
+    promoDiscount = d.discount_amount || 0;
+    el.textContent = `✅ Скидка: -${money(promoDiscount)}`;
+    const totalEl = document.getElementById('total-display');
+    const items = Object.entries(state.cart).map(([id, x]) => { const p = state.products.find(p => p.id == id); return p ? { ...x, p } : null; }).filter(Boolean);
+    const total = items.reduce((s, x) => s + x.p.price * x.qty, 0);
+    totalEl.textContent = money(Math.max(0, total - promoDiscount));
+  } catch (e) {}
+};
+
 window.checkout = async () => {
   const items = Object.entries(state.cart);
   if (!items.length) return;
   if (!tg?.initData) { alert('Откройте магазин из Telegram'); return; }
 
   const get = id => document.getElementById(id)?.value?.trim() || '';
-  const name = get('c_name'), phone = get('c_phone'), city = get('c_city'), address = get('c_address'), comment = get('c_comment');
+  const name = get('c_name'), phone = get('c_phone'), city = get('c_city'), address = get('c_address'), comment = get('c_comment'), promo = get('c_promo');
 
   if (!name || !phone || !city || !address) {
     alert('Заполните имя, телефон, город и адрес');
@@ -148,7 +177,7 @@ window.checkout = async () => {
   }
 
   const lines = items.map(([id, x]) => ({ product_id: Number(id), quantity: x.qty, size: null }));
-  const payload = { lines, name, phone, city, address, comment: comment || null, payment_method: 'sbp' };
+  const payload = { lines, name, phone, city, address, comment: comment || null, payment_method: 'sbp', promo_code: promo || null };
 
   const r = await fetch('/api/orders', {
     method: 'POST',

@@ -3,10 +3,10 @@ import json
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from sqlalchemy import select
+from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order
+from .models import Product, Order, Favorite, PromoCode
 
 dp = Dispatcher()
 
@@ -26,7 +26,8 @@ def main_menu():
         [InlineKeyboardButton(text='🛍 Открыть магазин', web_app=WebAppInfo(url=_miniapp_url()))],
         [InlineKeyboardButton(text='📦 Каталог', callback_data='catalog:0'),
          InlineKeyboardButton(text='📋 Мои заказы', callback_data='myorders:0')],
-        [InlineKeyboardButton(text='💬 Поддержка', callback_data='support')]
+        [InlineKeyboardButton(text='❤️ Избранное', callback_data='favorites:0'),
+         InlineKeyboardButton(text='💬 Поддержка', callback_data='support')]
     ])
 
 def back_menu():
@@ -134,12 +135,15 @@ async def on_text(message: Message):
             .order_by(Product.created_at.desc()).limit(5)
         )).all()
     if rows:
-        lines = []
-        kb_rows = []
-        for p in rows:
-            sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
-            lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
-            kb_rows.append([InlineKeyboardButton(text=f"🛍 {p.title[:30]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id)))])
+    lines = []
+    kb_rows = []
+    for p in rows:
+        sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
+        lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
+        kb_rows.append([
+            InlineKeyboardButton(text=f"🛍 {p.title[:25]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id))),
+        ])
+        kb_rows.append([InlineKeyboardButton(text='❤️ В избранное', callback_data=f'fav:{p.id}')])
         kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
         await message.answer(
             f'🔍 По запросу «{text}» нашлось:\n\n' + '\n\n'.join(lines),
@@ -159,6 +163,62 @@ async def on_text(message: Message):
 @dp.message(F.sticker | F.photo)
 async def on_media(message: Message):
     await message.answer('Принимаю только текст. Вот меню:', reply_markup=main_menu())
+
+# ── ИЗБРАННОЕ ──
+
+@dp.callback_query(F.data.startswith('fav:'))
+async def toggle_fav(call: CallbackQuery):
+    pid = int(call.data.split(':')[1])
+    async with SessionLocal() as db:
+        existing = await db.scalar(select(Favorite).where(Favorite.user_telegram_id == call.from_user.id, Favorite.product_id == pid))
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+            await call.answer('💔 Убрано из избранного')
+        else:
+            fav = Favorite(user_telegram_id=call.from_user.id, product_id=pid)
+            db.add(fav)
+            await db.commit()
+            await call.answer('❤️ Добавлено в избранное')
+
+@dp.callback_query(F.data.startswith('favorites:'))
+async def show_favorites(call: CallbackQuery):
+    try:
+        page = int(call.data.split(':')[1])
+    except Exception:
+        page = 0
+    limit = 5
+    offset = page * limit
+    async with SessionLocal() as db:
+        fav_ids_q = select(Favorite.product_id).where(Favorite.user_telegram_id == call.from_user.id).order_by(Favorite.id.desc()).limit(limit).offset(offset)
+        fav_ids = (await db.scalars(fav_ids_q)).all()
+        if not fav_ids:
+            await call.message.edit_text('❤️ Избранное пусто', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='📦 Каталог', callback_data='catalog:0')], [InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')]]))
+            return await call.answer()
+        rows = (await db.scalars(select(Product).where(Product.id.in_(fav_ids)))).all()
+    lines = []
+    kb_rows = []
+    for p in rows:
+        sizes = ", ".join(json.loads(p.sizes_json)) if p.sizes_json else "—"
+        lines.append(f"#{p.id} <b>{p.title}</b> — {float(p.sale_price):,.0f} ₽\nРазмеры: {sizes}")
+        kb_rows.append([InlineKeyboardButton(text=f"🛍 {p.title[:30]} — {float(p.sale_price):,.0f} ₽", web_app=WebAppInfo(url=_miniapp_url(p.id)))])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text='⬅️', callback_data=f'favorites:{page-1}'))
+    nav.append(InlineKeyboardButton(text=f'📄 {page+1}', callback_data='noop'))
+    async with SessionLocal() as db:
+        total_favs = await db.scalar(select(func.count(Favorite.id)).where(Favorite.user_telegram_id == call.from_user.id)) or 0
+    if (page + 1) * limit < total_favs:
+        nav.append(InlineKeyboardButton(text='➡️', callback_data=f'favorites:{page+1}'))
+    kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='back:main')])
+    text = f"❤️ <b>Избранное</b>\n\n" + "\n\n".join(lines)
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    try:
+        await call.message.edit_text(text, parse_mode='HTML', reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode='HTML', reply_markup=kb)
+    await call.answer()
 
 # ── КАТАЛОГ ──
 

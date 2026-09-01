@@ -112,6 +112,7 @@ class Checkout(BaseModel):
     address: str
     comment: str | None = None
     payment_method: str = 'sbp'
+    promo_code: str | None = None
 
     def validate_fields(self):
         for field in ('name', 'phone', 'city', 'address'):
@@ -208,6 +209,23 @@ async def validate(request: Request, x_telegram_init_data: str = Header(default=
     try: return validate_init_data(x_telegram_init_data)
     except ValueError as e: raise HTTPException(401, str(e))
 
+class PromoRequest(BaseModel):
+    code: str
+
+@app.post('/api/promo/validate')
+@limiter.limit("10/minute")
+async def promo_validate(request: Request, promo: PromoRequest, x_telegram_init_data: str = Header(default='')):
+    try: validate_init_data(x_telegram_init_data)
+    except: raise HTTPException(401, 'Auth required')
+    from .models import PromoCode
+    from datetime import datetime
+    async with SessionLocal() as db:
+        p = await db.scalar(select(PromoCode).where(PromoCode.code == promo.code.upper(), PromoCode.active == True))
+        if not p: raise HTTPException(404, 'Промокод не найден')
+        if p.expires_at and p.expires_at < datetime.utcnow(): raise HTTPException(400, 'Промокод истёк')
+        if p.used_count >= p.max_uses: raise HTTPException(400, 'Промокод использован')
+    return {'code': p.code, 'discount_type': p.discount_type, 'discount_value': float(p.discount_value), 'min_order': float(p.min_order)}
+
 @app.post('/api/orders')
 @limiter.limit("5/minute")
 async def create_order(request: Request, checkout: Checkout, x_telegram_init_data: str = Header(default='')):
@@ -240,7 +258,23 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                 if size and json.loads(p.sizes_json) and size not in json.loads(p.sizes_json): raise HTTPException(409, 'Invalid size')
                 subtotal += Decimal(str(p.sale_price)) * qty
                 verified.append((p, size, qty))
-            order = Order(telegram_user_id=telegram_user_id, status='awaiting_delivery', subtotal=subtotal, customer_name=checkout.name.strip(), phone=checkout.phone.strip(), city=checkout.city.strip(), address=checkout.address.strip(), comment=checkout.comment.strip() if checkout.comment else None, payment_method=checkout.payment_method)
+            # promo code
+            promo_discount = Decimal('0')
+            if checkout.promo_code:
+                from .models import PromoCode
+                from datetime import datetime
+                promo = await db.scalar(select(PromoCode).where(PromoCode.code == checkout.promo_code.upper(), PromoCode.active == True))
+                if promo and (not promo.expires_at or promo.expires_at >= datetime.utcnow()) and promo.used_count < promo.max_uses:
+                    if subtotal >= promo.min_order:
+                        if promo.discount_type == 'percent':
+                            promo_discount = subtotal * Decimal(str(promo.discount_value)) / Decimal('100')
+                        else:
+                            promo_discount = Decimal(str(promo.discount_value))
+                        if promo_discount > subtotal:
+                            promo_discount = subtotal
+                        promo.used_count += 1
+            final_total = subtotal - promo_discount
+            order = Order(telegram_user_id=telegram_user_id, status='awaiting_delivery', subtotal=subtotal, total=final_total, customer_name=checkout.name.strip(), phone=checkout.phone.strip(), city=checkout.city.strip(), address=checkout.address.strip(), comment=checkout.comment.strip() if checkout.comment else None, payment_method=checkout.payment_method)
             db.add(order)
             await db.flush()
             for p, size, qty in verified:
@@ -256,6 +290,8 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                 "address": checkout.address.strip(),
                 "comment": checkout.comment.strip() if checkout.comment else "",
                 "subtotal": float(subtotal),
+                "promo_discount": float(promo_discount),
+                "total": float(final_total),
                 "tg_id": telegram_user_id,
                 "items": [(p.title, size, qty, float(p.sale_price)) for p, size, qty in verified],
             }
@@ -271,8 +307,9 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                     f"💬 {order_snapshot['comment'] or '-'}\n"
                     f"TG: {order_snapshot['tg_id']}\n"
                     f"Сумма товаров: {order_snapshot['subtotal']:,.0f} ₽\n"
-                    f"Товары:\n" + "\n".join(f" - {t} {f'({s})' if s else ''} x{qty} = {price:,.0f} ₽" for t, s, qty, price in order_snapshot['items']) +
-                    f"\n\n/delivery {order_snapshot['id']} COST — задать доставку"
+                    + (f"Скидка: -{order_snapshot['promo_discount']:,.0f} ₽\n" if order_snapshot['promo_discount'] else "")
+                    + f"Итого: {order_snapshot['total']:,.0f} ₽\n"
+                    f"Товары:\n" + "\n".join(f" - {t} {f'({s})' if s else ''} x{qty} = {price:,.0f} ₽" for t, s, qty, price in order_snapshot['items'])
                 )
                 async def _notify():
                     bot = Bot(settings.admin_bot_token)
