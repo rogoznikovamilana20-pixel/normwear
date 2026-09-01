@@ -221,6 +221,45 @@ async def on_text(message: Message):
         reply_markup=main_menu()
     )
 
+# ── ОПЛАТА TELEGRAM STARS ──
+
+@dp.message(F.successful_payment)
+async def on_successful_payment(message: Message):
+    payment = message.successful_payment
+    payload = payment.invoice_payload
+    if payload and payload.startswith('order_'):
+        try:
+            order_id = int(payload.split('_')[1])
+            async with SessionLocal() as db:
+                order = await db.get(Order, order_id)
+                if order and order.telegram_user_id == message.from_user.id:
+                    order.status = 'paid'
+                    await db.commit()
+            await message.answer(
+                f'✅ Оплата прошла!\n\n'
+                f'Заказ #{order_id} оплачен {payment.total_amount} ⭐\n'
+                f'Статус: оплачен\n\n'
+                f'Мы начнём сборку в ближайшее время.',
+                reply_markup=main_menu()
+            )
+            # уведомить админов
+            from aiogram import Bot as _Bot
+            bot = _Bot(settings.shop_bot_token)
+            for admin_id in settings.admin_ids:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f'💰 Заказ #{order_id} оплачен!\n'
+                        f'Сумма: {payment.total_amount} ⭐\n'
+                        f'Пользователь: {message.from_user.id}'
+                    )
+                except Exception:
+                    pass
+            await bot.session.close()
+        except Exception as e:
+            print(f'payment handler error: {e}', flush=True)
+            await message.answer('✅ Оплата получена. Заказ обрабатывается.', reply_markup=main_menu())
+
 # ── СТИКЕРЫ / ФОТО / ПРОЧЕЕ ──
 
 @dp.message(F.sticker | F.photo)

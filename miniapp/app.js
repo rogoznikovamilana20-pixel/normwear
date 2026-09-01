@@ -177,7 +177,7 @@ window.checkout = async () => {
   }
 
   const lines = items.map(([id, x]) => ({ product_id: Number(id), quantity: x.qty, size: null }));
-  const payload = { lines, name, phone, city, address, comment: comment || null, payment_method: 'sbp', promo_code: promo || null };
+  const payload = { lines, name, phone, city, address, comment: comment || null, payment_method: 'stars', promo_code: promo || null };
 
   const r = await fetch('/api/orders', {
     method: 'POST',
@@ -187,14 +187,31 @@ window.checkout = async () => {
   const d = await r.json();
   if (!r.ok) { alert(d.detail || 'Ошибка'); return; }
 
-  state.cart = {};
-  saveCart();
-  app.innerHTML = `<div class="app success">
-    <div class="mark">✓</div>
-    <h1>Заказ #${d.order_id} принят</h1>
-    <p>Стоимость доставки менеджер рассчитает отдельно и сообщит итоговую сумму</p>
-    <button class="buy" onclick="render()" style="max-width:200px">Вернуться в каталог</button>
-  </div>`;
+  if (d.invoice_link) {
+    tg.openInvoice(d.invoice_link, async (status) => {
+      if (status === 'paid') {
+        state.cart = {};
+        saveCart();
+        app.innerHTML = `<div class="app success">
+          <div class="mark">✓</div>
+          <h1>Заказ #${d.order_id} оплачен</h1>
+          <p>Звёзды списаны. Заказ в обработке.</p>
+          <button class="buy" onclick="render()" style="max-width:200px">Вернуться в каталог</button>
+        </div>`;
+      } else {
+        alert('Оплата не прошла. Попробуйте ещё раз.');
+      }
+    });
+  } else {
+    state.cart = {};
+    saveCart();
+    app.innerHTML = `<div class="app success">
+      <div class="mark">✓</div>
+      <h1>Заказ #${d.order_id} принят</h1>
+      <p>Стоимость доставки менеджер рассчитает отдельно и сообщит итоговую сумму</p>
+      <button class="buy" onclick="render()" style="max-width:200px">Вернуться в каталог</button>
+    </div>`;
+  }
 };
 
 // ── FAVORITES (заглушка) ──

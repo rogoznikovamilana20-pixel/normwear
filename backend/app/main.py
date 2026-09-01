@@ -329,4 +329,34 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                     pass
         except Exception:
             pass
-        return {'order_id': order_id, 'subtotal': order_snapshot['subtotal'], 'delivery': None, 'total': None, 'status': 'awaiting_delivery', 'message': 'Заказ принят. Стоимость доставки уточнит менеджер.'}
+        # generate Stars invoice link if payment_method == 'stars'
+        invoice_link = None
+        if checkout.payment_method == 'stars':
+            try:
+                from aiogram import Bot
+                from aiogram.types import LabeledPrice
+                bot = Bot(settings.shop_bot_token)
+                # convert rubles to Stars (1 Star ≈ 2 rubles, min 1)
+                stars_amount = max(1, int(float(final_total) / 2))
+                prices = [LabeledPrice(label='Заказ', amount=stars_amount)]
+                invoice_link = await bot.create_invoice_link(
+                    title=f'Заказ #{order_id}',
+                    description=f'Оплата заказа #{order_id} в магазине NORMWEAR',
+                    payload=f'order_{order_id}',
+                    provider_token='',
+                    currency='XTR',
+                    prices=prices,
+                )
+                await bot.session.close()
+            except Exception as e:
+                print(f'Stars invoice error: {e}', flush=True)
+        return {
+            'order_id': order_id,
+            'subtotal': order_snapshot['subtotal'],
+            'delivery': None,
+            'total': None,
+            'stars_amount': stars_amount if checkout.payment_method == 'stars' else None,
+            'invoice_link': invoice_link,
+            'status': 'awaiting_delivery',
+            'message': 'Заказ принят. Стоимость доставки уточнит менеджер.'
+        }
