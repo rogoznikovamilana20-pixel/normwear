@@ -182,3 +182,13 @@ class ChatMessage(Base):
     file_id: Mapped[str | None] = mapped_column(String(512))
     file_type: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class AdminAudit(Base):
+    __tablename__ = 'admin_audit'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    admin_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    admin_name: Mapped[str | None] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(255))
+    target: Mapped[str | None] = mapped_column(String(255))
+    details: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage, AdminAudit
 from .publisher import ChannelPublisher
 import json
 
@@ -16,6 +16,14 @@ dp = Dispatcher()
 
 def allowed(user_id: int) -> bool:
     return bool(settings.admin_ids) and user_id in settings.admin_ids
+
+async def audit(admin_id: int, action: str, target: str = '', details: str = ''):
+    try:
+        async with SessionLocal() as db:
+            db.add(AdminAudit(admin_id=admin_id, action=action, target=target, details=details))
+            await db.commit()
+    except Exception:
+        pass
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -31,6 +39,7 @@ def main_menu():
          InlineKeyboardButton(text='📥 Экспорт CSV', callback_data='menu:export')],
         [InlineKeyboardButton(text='💬 Чаты', callback_data='menu:chats'),
          InlineKeyboardButton(text='📨 Шаблоны', callback_data='menu:templates')],
+        [InlineKeyboardButton(text='📋 Аудит-лог', callback_data='menu:audit')],
     ])
 
 def back_menu():
@@ -41,7 +50,55 @@ def back_menu():
 @dp.message(Command('start'))
 async def start(message: Message):
     if not allowed(message.from_user.id): return
+    await audit(message.from_user.id, 'bot_start')
     await message.answer('NORMWEAR ADMIN', reply_markup=main_menu())
+
+@dp.message(Command('audit'))
+async def audit_cmd(message: Message):
+    if not allowed(message.from_user.id): return
+    await show_audit_log(message, message.from_user.id)
+
+async def show_audit_log(target_message, viewer_id, page: int = 0):
+    async with SessionLocal() as db:
+        total = await db.scalar(select(func.count(AdminAudit.id))) or 0
+        logs = (await db.scalars(
+            select(AdminAudit).order_by(AdminAudit.id.desc()).offset(page * 8).limit(8)
+        )).all()
+    if not logs:
+        return await target_message.answer('📋 Аудит-лог пуст.', reply_markup=back_menu())
+    lines = []
+    for log in logs:
+        name = log.admin_name or str(log.admin_id)
+        ts = log.created_at.strftime('%d.%m %H:%M')
+        lines.append(f'<code>{ts}</code> <b>{name}</b> → {log.action} {log.target or ""}')
+        if log.details:
+            lines.append(f'  <i>{log.details[:60]}</i>')
+    text = '📋 <b>Аудит-лог</b>\n\n' + '\n'.join(lines)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text='⬅️', callback_data=f'audit:page:{page-1}'))
+    nav.append(InlineKeyboardButton(text=f'{page+1}/{(total-1)//8+1}', callback_data='audit:noop'))
+    if (page + 1) * 8 < total:
+        nav.append(InlineKeyboardButton(text='➡️', callback_data=f'audit:page:{page+1}'))
+    kb = InlineKeyboardMarkup(inline_keyboard=[nav])
+    await target_message.answer(text, parse_mode='HTML', reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data == 'menu:audit')
+async def menu_audit(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    await show_audit_log(call.message, call.from_user.id)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('audit:page:'))
+async def audit_page(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    page = int(call.data.split(':')[2])
+    await show_audit_log(call.message, call.from_user.id, page)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'audit:noop')
+async def audit_noop(call: CallbackQuery):
+    await call.answer()
 
 @dp.callback_query(lambda c: c.data == 'back:main')
 async def back_main(call: CallbackQuery):
@@ -311,6 +368,7 @@ async def text_input(message: Message):
         _user_state.pop(uid, None)
         disc = f'{value}%' if dtype == 'percent' else f'{value:,.0f} ₽'
         await message.answer(f'✅ Промокод <code>{code}</code> создан: {disc}', parse_mode='HTML', reply_markup=back_menu())
+        await audit(uid, 'promo_create', code, disc)
 
     elif state.startswith('awaiting_promo_'):
         _user_state.pop(uid, None)
@@ -347,6 +405,7 @@ async def text_input(message: Message):
                 failed += 1
         await bot.session.close()
         await message.answer(f'✅ Отправлено: {sent}\n❌ Ошибки: {failed}', reply_markup=back_menu())
+        await audit(uid, 'broadcast', segment, f'sent={sent}, failed={failed}')
 
     elif state == 'awaiting_ref_bonus':
         try:
@@ -410,6 +469,7 @@ async def text_input(message: Message):
             pass
         await bot.session.close()
         await message.answer(f'✅ Ответ отправлен пользователю {user_id}.', reply_markup=back_menu())
+        await audit(uid, 'chat_reply', str(user_id), text[:100])
 
     elif state == 'awaiting_template':
         text = message.text.strip()
@@ -510,6 +570,7 @@ async def change_status(call: CallbackQuery):
         if not o: return await call.answer('Заказ не найден', show_alert=True)
         o.status = new_status
         await db.commit()
+    await audit(call.from_user.id, 'order_status', f'#{oid}', status_labels.get(new_status, new_status))
     # уведомить клиента
     try:
         bot = Bot(settings.shop_bot_token)
@@ -993,6 +1054,7 @@ async def chat_close(call: CallbackQuery):
         if session:
             session.status = 'closed'
             await db.commit()
+    await audit(call.from_user.id, 'chat_close', str(user_id))
     await call.answer('Чат закрыт')
     from aiogram import Bot
     bot = Bot(settings.shop_bot_token)
