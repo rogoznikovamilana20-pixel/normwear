@@ -237,6 +237,22 @@ async def create_product(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={'detail': str(e)})
 
+@app.post('/api/products/bulk-publish')
+@limiter.limit("5/minute")
+async def bulk_publish(request: Request):
+    from .models import Product
+    async with SessionLocal() as db:
+        result = await db.execute(
+            select(Product).where(Product.status == 'draft')
+        )
+        products = result.scalars().all()
+        count = 0
+        for p in products:
+            p.status = 'published'
+            count += 1
+        await db.commit()
+    return {'published': count}
+
 @app.post('/api/session/validate')
 @limiter.limit("30/minute")
 async def validate(request: Request, x_telegram_init_data: str = Header(default='')):

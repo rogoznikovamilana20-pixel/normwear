@@ -1,6 +1,6 @@
 """
-Импорт каталога через API Render
-Запуск: python -m backend.app.import_catalog
+Import catalog via API
+Run: python -m backend.app.import_catalog
 """
 import json, sys, asyncio, httpx
 from pathlib import Path
@@ -10,7 +10,6 @@ CATALOG_PATH = Path(__file__).parent.parent.parent / "catalog_optobaza.json"
 MARGIN = 1.35
 
 async def main():
-
     if not CATALOG_PATH.exists():
         print(f"Catalog not found: {CATALOG_PATH}", file=sys.stderr)
         return
@@ -20,7 +19,6 @@ async def main():
 
     print(f"Loaded {len(catalog)} products", file=sys.stderr)
 
-    # get existing products
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(f"{API_URL}/api/products?limit=1000")
         existing = {p["title"] for p in r.json()} if r.status_code == 200 else set()
@@ -59,20 +57,31 @@ async def main():
                 "stock": stock,
             }
 
-            try:
-                r = await c.post(f"{API_URL}/api/products", json=payload)
-                if r.status_code == 200:
-                    imported += 1
-                    existing.add(title)
-                else:
+            for attempt in range(3):
+                try:
+                    r = await c.post(f"{API_URL}/api/products", json=payload)
+                    if r.status_code == 200:
+                        imported += 1
+                        existing.add(title)
+                        break
+                    elif r.status_code == 429:
+                        await asyncio.sleep(5)
+                    elif r.status_code == 409:
+                        skipped += 1
+                        existing.add(title)
+                        break
+                    else:
+                        errors += 1
+                        if errors <= 5:
+                            print(f"Error {r.status_code}: {r.text[:100]}", file=sys.stderr)
+                        break
+                except Exception as e:
                     errors += 1
                     if errors <= 3:
-                        print(f"Error {r.status_code}: {r.text[:100]}", file=sys.stderr)
-            except Exception as e:
-                errors += 1
-                if errors <= 3:
-                    print(f"Exception: {e}", file=sys.stderr)
+                        print(f"Exception: {e}", file=sys.stderr)
+                    break
 
+            await asyncio.sleep(0.3)
             if imported % 50 == 0 and imported > 0:
                 print(f"  ...imported {imported}", file=sys.stderr)
 
