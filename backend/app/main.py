@@ -207,28 +207,33 @@ async def media(product_id: int, index: int):
 @limiter.limit("60/minute")
 async def create_product(request: Request):
     from .models import Product
-    body = await request.json()
-    title = body.get('title', '').strip()[:200]
-    if not title:
-        raise HTTPException(400, 'title required')
-    async with SessionLocal() as db:
-        existing = await db.scalar(select(Product).where(Product.title == title))
-        if existing:
-            raise HTTPException(409, 'exists')
-        p = Product(
-            title=title,
-            description=body.get('description', ''),
-            category=body.get('category', ''),
-            purchase_price=float(body.get('purchase_price', 0)),
-            sale_price=float(body.get('sale_price', 0)),
-            sizes_json=json.dumps(body.get('sizes_json', [])),
-            stock=body.get('stock', 1),
-            status='draft',
-        )
-        db.add(p)
-        await db.commit()
-        await db.refresh(p)
-        return {'id': p.id, 'title': p.title}
+    try:
+        body = await request.json()
+        title = body.get('title', '').strip()[:200]
+        if not title:
+            raise HTTPException(400, 'title required')
+        async with SessionLocal() as db:
+            existing = await db.scalar(select(Product).where(Product.title == title))
+            if existing:
+                raise HTTPException(409, 'exists')
+            p = Product(
+                title=title,
+                description=body.get('description', ''),
+                category=body.get('category', ''),
+                purchase_price=float(body.get('purchase_price', 0)),
+                sale_price=float(body.get('sale_price', 0)),
+                sizes_json=json.dumps(body.get('sizes_json', [])),
+                stock=body.get('stock', 1),
+                status='draft',
+            )
+            db.add(p)
+            await db.commit()
+            await db.refresh(p)
+            return {'id': p.id, 'title': p.title}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={'detail': str(e)})
 
 @app.post('/api/session/validate')
 @limiter.limit("30/minute")
