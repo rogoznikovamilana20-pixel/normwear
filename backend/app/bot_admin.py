@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct
+from .models import Product, Order, BannedProduct, SupportTicket
 from .publisher import ChannelPublisher
 import json
 
@@ -335,6 +335,34 @@ async def menu_broadcast(call: CallbackQuery):
     ])
     await call.message.edit_text('📢 Напиши текст поста (поддерживает HTML: <b>жирный</b>, <i>курсив</i>):', reply_markup=kb)
     await call.answer()
+
+# ── ОТВЕТ НА СООБЩЕНИЕ ПОДДЕРЖКИ ──
+
+@dp.message(F.reply_to_message)
+async def support_reply(message: Message):
+    if not allowed(message.from_user.id): return
+    if not message.reply_to_message: return
+    async with SessionLocal() as db:
+        ticket = await db.scalar(
+            select(SupportTicket).where(
+                SupportTicket.admin_chat_id == message.chat.id,
+                SupportTicket.admin_message_id == message.reply_to_message.message_id,
+            ).order_by(SupportTicket.id.desc())
+        )
+    if not ticket:
+        return
+    bot = Bot(settings.shop_bot_token)
+    try:
+        await bot.send_message(
+            ticket.user_telegram_id,
+            f'💬 <b>Ответ менеджера:</b>\n\n{message.text}',
+            parse_mode='HTML',
+        )
+        await message.answer('✅ Ответ отправлен клиенту.')
+    except Exception as e:
+        await message.answer(f'❌ Ошибка: {e}')
+    finally:
+        await bot.session.close()
 
 # ── ЛЮБОЕ ТЕКСТОВОЕ СООБЩЕНИЕ (не в стейте) ──
 

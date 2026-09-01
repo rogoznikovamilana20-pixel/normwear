@@ -10,6 +10,8 @@ from .models import Product, Order
 
 dp = Dispatcher()
 
+_support_mode: dict[int, bool] = {}
+
 def _miniapp_url(product_id: int | None = None) -> str:
     base = settings.miniapp_url_template.split('?')[0]
     if product_id is None:
@@ -43,6 +45,7 @@ async def start(message: Message):
 
 @dp.callback_query(F.data == 'back:main')
 async def back_main(call: CallbackQuery):
+    _support_mode.pop(call.from_user.id, None)
     await call.message.edit_text(
         'Добро пожаловать в <b>NORMWEAR</b>.\n\n'
         'Вся витрина и заказ — внутри Telegram.',
@@ -53,9 +56,11 @@ async def back_main(call: CallbackQuery):
 
 @dp.callback_query(F.data == 'support')
 async def support_cb(call: CallbackQuery):
+    _support_mode[call.from_user.id] = True
     await call.message.edit_text(
         '💬 <b>Поддержка NORMWEAR</b>\n\n'
-        'Напишите ваш вопрос сюда — менеджер ответит в ближайшее время.',
+        'Напишите ваш вопрос — менеджер ответит.\n'
+        'Для выхода нажмите «⬅️ Меню».',
         parse_mode='HTML',
         reply_markup=back_menu()
     )
@@ -66,6 +71,40 @@ async def support_cb(call: CallbackQuery):
 @dp.message(F.text)
 async def on_text(message: Message):
     text = message.text.strip()
+
+    # поддержка — переслать админам
+    if _support_mode.get(message.from_user.id):
+        if text == '⬅️ Меню':
+            _support_mode.pop(message.from_user.id, None)
+            return await message.answer('Главное меню:', reply_markup=main_menu())
+        user = message.from_user
+        fwd_text = (
+            f'💬 <b>Вопрос из поддержки</b>\n'
+            f'От: @{user.username or "—"} (ID: {user.id})\n'
+            f'Имя: {user.first_name}\n\n'
+            f'{text}'
+        )
+        bot = Bot(settings.shop_bot_token)
+        for admin_id in settings.admin_ids:
+            try:
+                sent = await bot.send_message(admin_id, fwd_text, parse_mode='HTML')
+                # сохраняем message_id для ответа
+                from .db import SessionLocal as _SL
+                async with _SL() as db:
+                    from .models import SupportTicket
+                    ticket = SupportTicket(
+                        user_telegram_id=user.id,
+                        admin_chat_id=admin_id,
+                        admin_message_id=sent.message_id,
+                        user_message_id=message.message_id,
+                    )
+                    db.add(ticket)
+                    await db.commit()
+            except Exception:
+                pass
+        await bot.session.close()
+        await message.answer('✅ Вопрос отправлен менеджеру. Ожидайте ответ.', reply_markup=back_menu())
+        return
 
     # попробовать как номер заказа
     if text.isdigit():

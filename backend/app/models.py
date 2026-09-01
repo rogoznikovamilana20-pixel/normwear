@@ -81,3 +81,12 @@ class OrderItem(Base):
     size: Mapped[str | None] = mapped_column(String(32))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     unit_price: Mapped[float] = mapped_column(Numeric(12, 2))
+
+class SupportTicket(Base):
+    __tablename__ = 'support_tickets'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    admin_chat_id: Mapped[int] = mapped_column(BigInteger)
+    admin_message_id: Mapped[int] = mapped_column(Integer)
+    user_message_id: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
