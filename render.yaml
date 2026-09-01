@@ -6,7 +6,6 @@ services:
     dockerContext: .
     plan: free
     healthCheckPath: /health
-    dockerCommand: sh -c "python -m app.init_db && uvicorn app.main:app --host 0.0.0.0 --port $PORT & python -m app.bot_shop & python -m app.bot_admin & python -m app.supplier_daemon & wait"
     envVars:
       - key: APP_ENV
         value: production
