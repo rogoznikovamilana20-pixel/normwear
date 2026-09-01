@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint
+from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage
 from .publisher import ChannelPublisher
 import json
 
@@ -29,6 +29,8 @@ def main_menu():
          InlineKeyboardButton(text='🎯 Сегменты', callback_data='menu:segments')],
         [InlineKeyboardButton(text='📍 Пункты выдачи', callback_data='menu:pickups'),
          InlineKeyboardButton(text='📥 Экспорт CSV', callback_data='menu:export')],
+        [InlineKeyboardButton(text='💬 Чаты', callback_data='menu:chats'),
+         InlineKeyboardButton(text='📨 Шаблоны', callback_data='menu:templates')],
     ])
 
 def back_menu():
@@ -388,6 +390,34 @@ async def text_input(message: Message):
             await db.commit()
         _user_state.pop(uid, None)
         await message.answer(f'✅ Пункт «{name}» добавлен.', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_chat_reply:'):
+        user_id = int(state.split(':')[1])
+        text = message.text.strip()
+        _user_state.pop(uid, None)
+        async with SessionLocal() as db:
+            session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
+            if session:
+                msg = ChatMessage(session_id=session.id, sender_id=uid, sender_role='admin', text=text)
+                db.add(msg)
+                session.last_message_at = datetime.utcnow()
+                await db.commit()
+        from aiogram import Bot
+        bot = Bot(settings.shop_bot_token)
+        try:
+            await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
+        except Exception:
+            pass
+        await bot.session.close()
+        await message.answer(f'✅ Ответ отправлен пользователю {user_id}.', reply_markup=back_menu())
+
+    elif state == 'awaiting_template':
+        text = message.text.strip()
+        templates = _template_cache.get(uid, [])
+        templates.append(text)
+        _template_cache[uid] = templates
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Шаблон сохранён ({len(templates)} шт.).', reply_markup=back_menu())
 
     elif state == 'awaiting_broadcast':
         _user_state.pop(uid, None)
@@ -897,6 +927,172 @@ async def pickup_rm(call: CallbackQuery):
             await db.commit()
     await call.answer('Удалён')
     await call.message.edit_text('✅ Пункт удалён.', reply_markup=back_menu())
+
+# ── ЧАТЫ ──
+
+@dp.callback_query(lambda c: c.data == 'menu:chats')
+async def menu_chats(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        sessions = (await db.scalars(
+            select(ChatSession).where(ChatSession.status == 'open').order_by(ChatSession.last_message_at.desc())
+        )).all()
+    if not sessions:
+        return await call.message.edit_text('💬 Нет активных чатов.', reply_markup=back_menu())
+    buttons = []
+    for s in sessions[:10]:
+        label = f'👤 {s.user_id} — {s.last_message_at.strftime("%H:%M")}'
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f'chat:view:{s.user_id}')])
+    buttons.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')])
+    await call.message.edit_text(f'💬 Активные чаты ({len(sessions)}):', reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('chat:view:'))
+async def chat_view(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    user_id = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
+        if not session:
+            return await call.answer('Чат не найден', show_alert=True)
+        msgs = (await db.scalars(
+            select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.id.desc()).limit(10)
+        )).all()
+    lines = []
+    for m in reversed(msgs):
+        prefix = '👤' if m.sender_role == 'user' else '👨‍💼'
+        lines.append(f'{prefix} {m.text or "[файл]"}')
+    history = '\n'.join(lines)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='↩️ Ответить', callback_data=f'chat:reply:{user_id}')],
+        [InlineKeyboardButton(text='🔒 Закрыть чат', callback_data=f'chat:close:{user_id}')],
+        [InlineKeyboardButton(text='⬅️ Чаты', callback_data='menu:chats')],
+    ])
+    await call.message.edit_text(f'💬 <b>Чат #{session.id}</b>\n👤 {user_id}\n\n{history}', parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('chat:reply:'))
+async def chat_reply_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    user_id = int(call.data.split(':')[2])
+    _chat_reply_to[call.from_user.id] = user_id
+    _user_state[call.from_user.id] = f'awaiting_chat_reply:{user_id}'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📨 Шаблон', callback_data='templates:pick')],
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:chats')],
+    ])
+    await call.message.edit_text(f'↩️ Ответ пользователю {user_id}:\n\nНапиши текст:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('chat:close:'))
+async def chat_close(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    user_id = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
+        if session:
+            session.status = 'closed'
+            await db.commit()
+    await call.answer('Чат закрыт')
+    from aiogram import Bot
+    bot = Bot(settings.shop_bot_token)
+    try:
+        await bot.send_message(user_id, '🔒 Чат с поддержкой закрыт.', reply_markup=main_menu())
+    except Exception:
+        pass
+    await bot.session.close()
+    await call.message.edit_text(f'✅ Чат с {user_id} закрыт.', reply_markup=back_menu())
+
+# ── ШАБЛОНЫ ──
+
+_template_cache: dict[int, list[str]] = {}
+
+@dp.callback_query(lambda c: c.data == 'menu:templates')
+async def menu_templates(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    templates = _template_cache.get(call.from_user.id, [])
+    lines = '\n'.join(f'{i+1}. {t[:40]}' for i, t in enumerate(templates)) if templates else 'Пока нет шаблонов.'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='➕ Добавить шаблон', callback_data='template:add')],
+        [InlineKeyboardButton(text='🗑 Удалить шаблон', callback_data='template:del')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+    await call.message.edit_text(f'📨 <b>Шаблоны ответов</b>\n\n{lines}', parse_mode='HTML', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'template:add')
+async def template_add_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    _user_state[call.from_user.id] = 'awaiting_template'
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='❌ Отмена', callback_data='menu:templates')]
+    ])
+    await call.message.edit_text('📨 Введи текст шаблона:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'template:del')
+async def template_del_start(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    templates = _template_cache.get(call.from_user.id, [])
+    if not templates:
+        return await call.message.edit_text('Нет шаблонов.', reply_markup=back_menu())
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f'🗑 {t[:30]}', callback_data=f'template:rm:{i}')] for i, t in enumerate(templates)
+    ] + [[InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:templates')]])
+    await call.message.edit_text('Выбери шаблон для удаления:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('template:rm:'))
+async def template_rm(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    idx = int(call.data.split(':')[2])
+    templates = _template_cache.get(call.from_user.id, [])
+    if 0 <= idx < len(templates):
+        templates.pop(idx)
+    await call.answer('Удалён')
+    await call.message.edit_text('✅ Шаблон удалён.', reply_markup=back_menu())
+
+@dp.callback_query(lambda c: c.data == 'templates:pick')
+async def template_pick(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    templates = _template_cache.get(call.from_user.id, [])
+    if not templates:
+        return await call.answer('Нет шаблонов', show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t[:40], callback_data=f'tpl:use:{i}')] for i, t in enumerate(templates)
+    ] + [[InlineKeyboardButton(text='❌ Назад', callback_data='menu:chats')]])
+    await call.message.edit_text('📨 Выбери шаблон:', reply_markup=kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('tpl:use:'))
+async def template_use(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    idx = int(call.data.split(':')[2])
+    templates = _template_cache.get(call.from_user.id, [])
+    if 0 <= idx < len(templates):
+        text = templates[idx]
+        user_id = _chat_reply_to.get(call.from_user.id)
+        if user_id:
+            async with SessionLocal() as db:
+                session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
+                if session:
+                    msg = ChatMessage(session_id=session.id, sender_id=call.from_user.id, sender_role='admin', text=text)
+                    db.add(msg)
+                    session.last_message_at = datetime.utcnow()
+                    await db.commit()
+            from aiogram import Bot
+            bot = Bot(settings.shop_bot_token)
+            try:
+                await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
+            except Exception:
+                pass
+            await bot.session.close()
+            _user_state.pop(call.from_user.id, None)
+            _chat_reply_to.pop(call.from_user.id, None)
+            await call.message.edit_text(f'✅ Шаблон отправлен.', reply_markup=back_menu())
+        else:
+            await call.answer('Нет активного ответа', show_alert=True)
+    await call.answer()
 
 # ── ФОТО / СТИКЕРЫ ──
 

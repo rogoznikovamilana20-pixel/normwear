@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select, func
 from .config import settings
 from .db import SessionLocal
-from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint
+from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage
 
 dp = Dispatcher()
 
@@ -84,10 +84,27 @@ async def back_main(call: CallbackQuery):
 
 @dp.callback_query(F.data == 'support')
 async def support_cb(call: CallbackQuery):
-    _support_mode[call.from_user.id] = True
+    uid = call.from_user.id
+    async with SessionLocal() as db:
+        session = await db.scalar(select(ChatSession).where(ChatSession.user_id == uid))
+        if not session:
+            session = ChatSession(user_id=uid, status='open')
+            db.add(session)
+            await db.commit()
+            await db.refresh(session)
+    _chat_mode[uid] = True
+    # показать последние 5 сообщений
+    async with SessionLocal() as db:
+        msgs = (await db.scalars(
+            select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.id.desc()).limit(5)
+        )).all()
+    history = '\n'.join(
+        f"{'👤' if m.sender_role == 'user' else '👨‍💼'} {m.text or '[файл]'}"
+        for m in reversed(msgs)
+    ) if msgs else 'Нет сообщений.'
     await call.message.edit_text(
-        '💬 <b>Поддержка NORMWEAR</b>\n\n'
-        'Напишите ваш вопрос — менеджер ответит.\n'
+        f'💬 <b>Чат с поддержкой</b>\n\n{history}\n\n'
+        'Напишите сообщение — менеджер ответит.\n'
         'Для выхода нажмите «⬅️ Меню».',
         parse_mode='HTML',
         reply_markup=back_menu()
@@ -119,38 +136,38 @@ async def on_text(message: Message):
         await message.answer(f'✅ Спасибо за отзыв! {"⭐" * rating}', reply_markup=main_menu())
         return
 
-    # поддержка — переслать админам
-    if _support_mode.get(message.from_user.id):
+    # live chat
+    if _chat_mode.get(message.from_user.id):
         if text == '⬅️ Меню':
-            _support_mode.pop(message.from_user.id, None)
+            _chat_mode.pop(message.from_user.id, None)
             return await message.answer('Главное меню:', reply_markup=main_menu())
         user = message.from_user
-        fwd_text = (
-            f'💬 <b>Вопрос из поддержки</b>\n'
-            f'От: @{user.username or "—"} (ID: {user.id})\n'
-            f'Имя: {user.first_name}\n\n'
-            f'{text}'
-        )
-        bot = Bot(settings.shop_bot_token)
+        async with SessionLocal() as db:
+            session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user.id))
+            if not session:
+                session = ChatSession(user_id=user.id, status='open')
+                db.add(session)
+                await db.commit()
+                await db.refresh(session)
+            msg = ChatMessage(session_id=session.id, sender_id=user.id, sender_role='user', text=text)
+            db.add(msg)
+            session.last_message_at = datetime.utcnow()
+            await db.commit()
+        # уведомить админов
+        fwd = (f'💬 <b>Чат #{session.id}</b>\n'
+               f'От: @{user.username or "—"} ({user.id})\n'
+               f'{user.first_name}\n\n{text}')
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f'↩️ Ответить', callback_data=f'chat:reply:{user.id}')]
+        ])
         for admin_id in settings.admin_ids:
             try:
-                sent = await bot.send_message(admin_id, fwd_text, parse_mode='HTML')
-                # сохраняем message_id для ответа
-                from .db import SessionLocal as _SL
-                async with _SL() as db:
-                    from .models import SupportTicket
-                    ticket = SupportTicket(
-                        user_telegram_id=user.id,
-                        admin_chat_id=admin_id,
-                        admin_message_id=sent.message_id,
-                        user_message_id=message.message_id,
-                    )
-                    db.add(ticket)
-                    await db.commit()
+                b = Bot(settings.shop_bot_token)
+                await b.send_message(admin_id, fwd, parse_mode='HTML', reply_markup=kb)
+                await b.session.close()
             except Exception:
                 pass
-        await bot.session.close()
-        await message.answer('✅ Вопрос отправлен менеджеру. Ожидайте ответ.', reply_markup=back_menu())
+        await message.answer('✅ Сообщение отправлено. Ожидайте ответ.', reply_markup=back_menu())
         return
 
     # попробовать как номер заказа

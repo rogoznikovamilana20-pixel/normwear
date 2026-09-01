@@ -163,3 +163,22 @@ class PickupPoint(Base):
     phone: Mapped[str | None] = mapped_column(String(32))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class ChatSession(Base):
+    __tablename__ = 'chat_sessions'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default='open')
+    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer, index=True)
+    sender_id: Mapped[int] = mapped_column(BigInteger)
+    sender_role: Mapped[str] = mapped_column(String(8))
+    text: Mapped[str | None] = mapped_column(Text)
+    file_id: Mapped[str | None] = mapped_column(String(512))
+    file_type: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
