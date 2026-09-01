@@ -256,9 +256,20 @@ async def text_input(message: Message):
         _user_state.pop(uid, None)
         await message.answer(f'✅ Заказ #{oid}: доставка {cost:,.0f} ₽. Итого: {float(o.total):,.0f} ₽', reply_markup=back_menu())
 
-    elif state.startswith('awaiting_promo_'):
-        _user_state.pop(uid, None)
-        return
+    elif state.startswith('awaiting_promo_code'):
+        code = message.text.strip().upper()
+        if len(code) < 3 or len(code) > 20:
+            return await message.answer('Код 3-20 символов. Попробуй ещё:')
+        async with SessionLocal() as db:
+            exists = await db.scalar(select(PromoCode).where(PromoCode.code == code))
+        if exists:
+            return await message.answer('Такой код уже есть. Попробуй другой:')
+        _user_state[uid] = f'awaiting_promo_type:{code}'
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='% Процент', callback_data=f'promotype:{code}:percent'),
+             InlineKeyboardButton(text='₽ Сумма', callback_data=f'promotype:{code}:fixed')],
+        ])
+        await message.answer(f'Код: <code>{code}</code>\nТип скидки:', parse_mode='HTML', reply_markup=kb)
 
     elif state.startswith('awaiting_promo_value:'):
         parts = state.split(':')
@@ -276,6 +287,10 @@ async def text_input(message: Message):
         _user_state.pop(uid, None)
         disc = f'{value}%' if dtype == 'percent' else f'{value:,.0f} ₽'
         await message.answer(f'✅ Промокод <code>{code}</code> создан: {disc}', parse_mode='HTML', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_promo_'):
+        _user_state.pop(uid, None)
+        return
 
     elif state == 'awaiting_broadcast':
         _user_state.pop(uid, None)
