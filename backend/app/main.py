@@ -4,7 +4,7 @@ import hmac
 import time as _time
 from decimal import Decimal
 from datetime import datetime, timezone
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -357,7 +357,7 @@ async def bulk_create(request: Request):
 
 @app.post('/api/products/bulk-publish')
 @limiter.limit("5/minute")
-async def bulk_publish(request: Request):
+async def bulk_publish_status(request: Request):
     _require_admin(request)
     from .models import Product
     async with SessionLocal() as db:
@@ -778,25 +778,17 @@ async def delete_channel_message(message_id: int, request: Request):
     except Exception as e:
         raise HTTPException(500, str(e))
 
-# ── BULK PUBLISH ──
+# ── BULK PUBLISH (async background) ──
 
-@app.post('/api/admin/bulk-publish')
-async def bulk_publish(request: Request):
-    _require_admin(request)
-    body = await request.json()
-    product_ids = body.get('product_ids', [])
-    if not product_ids:
-        raise HTTPException(400, 'product_ids required')
+async def _do_bulk_publish(product_ids: list[int]):
     import asyncio
     from .publisher import ChannelPublisher
     pub = ChannelPublisher()
-    results = []
     for i, pid in enumerate(product_ids):
         try:
             async with SessionLocal() as db:
                 p = await db.get(Product, pid)
                 if not p:
-                    results.append({'id': pid, 'error': 'not found'})
                     continue
                 if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
                     p.sale_price = round(float(p.purchase_price) * (1 + settings.default_margin_pct / 100))
@@ -805,18 +797,26 @@ async def bulk_publish(request: Request):
             media = json.loads(p.media_json)
             http_urls = [m for m in media if m.startswith('http')]
             if not http_urls:
-                results.append({'id': pid, 'error': 'no photos'})
                 continue
             msg_id = await pub.publish(p, http_urls[:6])
             async with SessionLocal() as db:
                 p.channel_message_id = msg_id
                 await db.commit()
-            results.append({'id': pid, 'message_id': msg_id, 'price': float(p.sale_price)})
+            print(f'[BULK] published {pid} msg={msg_id}', flush=True)
         except Exception as e:
-            results.append({'id': pid, 'error': str(e)})
+            print(f'[BULK] error {pid}: {e}', flush=True)
         if i < len(product_ids) - 1:
             await asyncio.sleep(300)
-    return {'results': results}
+
+@app.post('/api/admin/bulk-publish')
+async def bulk_publish(request: Request, background_tasks: BackgroundTasks):
+    _require_admin(request)
+    body = await request.json()
+    product_ids = body.get('product_ids', [])
+    if not product_ids:
+        raise HTTPException(400, 'product_ids required')
+    background_tasks.add_task(_do_bulk_publish, product_ids)
+    return {'status': 'started', 'count': len(product_ids)}
 
 # ── PUBLISH PRODUCT TO CHANNEL ──
 

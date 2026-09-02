@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     admin_bot_token: str
     shop_channel_id: int = -1004387729213
     shop_channel_username: str = 'normwear_shop'
+    shop_username: str = 'norm_shop_bot'
     supplier_channel_username: str = 'optobaza'
     telegram_api_id: int
     telegram_api_hash: str

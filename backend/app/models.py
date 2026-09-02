@@ -214,3 +214,37 @@ class LoyaltyTransaction(Base):
     order_id: Mapped[int | None] = mapped_column(Integer)
     description: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+class SourcePost(Base):
+    __tablename__ = 'source_posts'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_channel: Mapped[str] = mapped_column(String(255), index=True)
+    source_message_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    source_album_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    source_date: Mapped[datetime | None] = mapped_column(DateTime)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    raw_caption: Mapped[str | None] = mapped_column(Text)
+    raw_media_json: Mapped[str | None] = mapped_column(Text)
+    media_count: Mapped[int] = mapped_column(Integer, default=0)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey('products.id', ondelete='SET NULL'), index=True)
+    product_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    processing_status: Mapped[str] = mapped_column(String(32), default='pending', index=True)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+class ProcessingJob(Base):
+    __tablename__ = 'processing_jobs'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(64), index=True)
+    source_post_id: Mapped[int | None] = mapped_column(ForeignKey('source_posts.id', ondelete='CASCADE'), index=True)
+    status: Mapped[str] = mapped_column(String(32), default='pending', index=True)
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
