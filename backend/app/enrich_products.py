@@ -6,7 +6,7 @@ import json, sys, asyncio, httpx, re
 from pathlib import Path
 
 API_URL = "https://normwear-api.onrender.com"
-EXCEL_JSON = Path(__file__).parent.parent.parent / "moysklad_excel_products.json"
+EXCEL_JSON = Path(__file__).parent.parent / "moysklad_excel_products.json"
 MARGIN = 2.0  # retail = wholesale * 2
 
 async def main():

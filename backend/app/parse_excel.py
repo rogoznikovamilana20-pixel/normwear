@@ -1,8 +1,8 @@
 """
 Parse МойСклад Excel export → clean JSON for import.
-Structure: Товар row = parent product, followed by Модификация rows = color/size variants.
+Produces BOTH parent products AND individual variant products (one per code).
 """
-import openpyxl, json, re
+import openpyxl, json
 from pathlib import Path
 from collections import defaultdict
 
@@ -12,27 +12,7 @@ OUTPUT = Path(__file__).parent.parent / 'moysklad_excel_products.json'
 wb = openpyxl.load_workbook(INPUT, data_only=True)
 ws = wb['Sheet0']
 
-# Column indices (0-based from headers.txt)
-COL_GROUP = 0
-COL_UUID = 1
-COL_TYPE = 2
-COL_CODE = 3
-COL_NAME = 4
-COL_ARTICLE = 6
-COL_PRICE_RETAIL = 8
-COL_PRICE_WHOLESALE = 10
-COL_PRICE_SITE = 12
-COL_PURCHASE = 16
-COL_SUPPLIER = 34
-COL_PARENT_CODE = 36
-COL_ARCHIVE = 37
-COL_GENDER = 49
-COL_IMAGE = 54
-COL_COLOR = 55
-COL_SIZE = 56
-
 def parse_price(val):
-    """Parse '4300,00' → 4300.0"""
     if val is None:
         return 0.0
     s = str(val).replace(',', '.').replace(' ', '').replace('\xa0', '')
@@ -41,26 +21,25 @@ def parse_price(val):
     except ValueError:
         return 0.0
 
-# First pass: collect all Товар rows as product headers
+# Pass 1: collect all Товар as parents, then attach Модификации
 products = {}  # code → product dict
 current_product = None
 
 for r in range(2, ws.max_row + 1):
-    row_type = ws.cell(r, COL_TYPE + 1).value
-    group = ws.cell(r, COL_GROUP + 1).value
-    code = ws.cell(r, COL_CODE + 1).value
-    name = ws.cell(r, COL_NAME + 1).value
-    image = ws.cell(r, COL_IMAGE + 1).value
-    retail = ws.cell(r, COL_PRICE_RETAIL + 1).value
-    wholesale = ws.cell(r, COL_PRICE_WHOLESALE + 1).value
-    site_price = ws.cell(r, COL_PRICE_SITE + 1).value
-    purchase = ws.cell(r, COL_PURCHASE + 1).value
-    color = ws.cell(r, COL_COLOR + 1).value
-    size = ws.cell(r, COL_SIZE + 1).value
-    uuid = ws.cell(r, COL_UUID + 1).value
+    row_type = ws.cell(r, 3).value
+    code = str(ws.cell(r, 4).value or '').strip()
+    name = ws.cell(r, 5).value
+    image = ws.cell(r, 55).value
+    retail = ws.cell(r, 9).value
+    wholesale = ws.cell(r, 11).value
+    purchase = ws.cell(r, 17).value
+    color = ws.cell(r, 56).value
+    size = ws.cell(r, 57).value
+    uuid = ws.cell(r, 2).value
+    group = ws.cell(r, 1).value
+    parent_code = ws.cell(r, 37).value  # for modifications
 
     if row_type == 'Товар':
-        # Parse group: "Куртки/Oakley" → category="Куртки", brand="Oakley"
         category = ''
         brand = ''
         if group:
@@ -69,32 +48,31 @@ for r in range(2, ws.max_row + 1):
             if len(parts) > 1:
                 brand = parts[1].strip()
 
-        code_str = str(code).strip() if code else ''
         current_product = {
-            'code': code_str,
+            'code': code,
             'uuid': str(uuid) if uuid else '',
             'name': str(name).strip() if name else '',
             'category': category,
             'brand': brand,
             'retail_price': parse_price(retail),
             'wholesale_price': parse_price(wholesale),
-            'site_price': parse_price(site_price),
             'purchase_price': parse_price(purchase),
             'image_url': str(image).strip() if image and str(image).startswith('http') else '',
             'sizes': [],
             'colors': [],
             'mods': [],
         }
-        products[code_str] = current_product
+        products[code] = current_product
 
     elif row_type == 'Модификация' and current_product:
         mod = {
-            'code': str(ws.cell(r, COL_CODE + 1).value or '').strip(),
+            'code': code,
             'uuid': str(uuid) if uuid else '',
             'color': str(color).strip() if color else '',
             'size': str(size).strip() if size else '',
-            'retail_price': parse_price(ws.cell(r, COL_PRICE_RETAIL + 1).value),
-            'purchase_price': parse_price(ws.cell(r, COL_PURCHASE + 1).value),
+            'retail_price': parse_price(ws.cell(r, 9).value),
+            'purchase_price': parse_price(ws.cell(r, 17).value),
+            'image_url': str(image).strip() if image and str(image).startswith('http') else '',
         }
         current_product['mods'].append(mod)
         if mod['size'] and mod['size'] not in current_product['sizes']:
@@ -104,13 +82,15 @@ for r in range(2, ws.max_row + 1):
 
 wb.close()
 
-# Clean up and compute final fields
+# Pass 2: build flat list with BOTH parent-level and variant-level entries
 result = []
+size_order = {'XXS': 0, 'XS': 1, 'S': 2, 'M': 3, 'L': 4, 'XL': 5, '2XL': 6, '3XL': 7, '4XL': 8}
+
 for code, p in products.items():
     if not p['name'] or p['name'] == 'ИЗ':
-        continue  # skip service entries
+        continue
 
-    # Build description from brand + category + colors
+    p['sizes'].sort(key=lambda s: size_order.get(s.upper(), 99))
     desc_parts = []
     if p['brand']:
         desc_parts.append(p['brand'])
@@ -118,10 +98,7 @@ for code, p in products.items():
         desc_parts.append(f"Цвета: {', '.join(p['colors'])}")
     description = ' | '.join(desc_parts) if desc_parts else p['brand']
 
-    # Build title
-    title = f"{p['name']} [{p['code']}]" if p['code'] else p['name']
-
-    # Determine retail price: if parent is 0, use first mod price
+    # Determine retail price
     retail = p['retail_price']
     if retail <= 0 and p['mods']:
         for m in p['mods']:
@@ -129,48 +106,60 @@ for code, p in products.items():
                 retail = m['retail_price']
                 break
 
-    # Sort sizes
-    size_order = {'XXS': 0, 'XS': 1, 'S': 2, 'M': 3, 'L': 4, 'XL': 5, '2XL': 6, '3XL': 7, '4XL': 8}
-    p['sizes'].sort(key=lambda s: size_order.get(s.upper(), 99))
-
-    result.append({
+    # Parent-level entry
+    parent_title = f"{p['name']} [{p['code']}]" if p['code'] else p['name']
+    entry = {
         'code': p['code'],
         'uuid': p['uuid'],
-        'title': title,
+        'title': parent_title,
         'name': p['name'],
         'category': p['category'],
         'brand': p['brand'],
         'description': description,
         'retail_price': retail,
         'wholesale_price': p['wholesale_price'],
-        'site_price': p['site_price'],
         'purchase_price': p['purchase_price'],
         'image_url': p['image_url'],
         'sizes': p['sizes'],
         'colors': p['colors'],
         'mod_count': len(p['mods']),
         'mods': p['mods'],
-    })
+    }
+    result.append(entry)
 
-# Sort by category, then name
-result.sort(key=lambda x: (x['category'], x['brand'], x['name']))
+    # Variant-level entries: one per modification code
+    for m in p['mods']:
+        mod_title = f"{p['name']} ({m['size']}, {m['color']}) [{m['code']}]" if m['code'] else p['name']
+        mod_retail = m['retail_price'] if m['retail_price'] > 0 else retail
+        mod_entry = {
+            'code': m['code'],
+            'uuid': m['uuid'],
+            'title': mod_title,
+            'name': p['name'],
+            'category': p['category'],
+            'brand': p['brand'],
+            'description': description,
+            'retail_price': mod_retail,
+            'wholesale_price': p['wholesale_price'],
+            'purchase_price': m['purchase_price'] if m['purchase_price'] > 0 else p['purchase_price'],
+            'image_url': m.get('image_url') or p['image_url'],
+            'sizes': [m['size']] if m['size'] else [],
+            'colors': [m['color']] if m['color'] else [],
+            'mod_count': 0,
+            'mods': [],
+        }
+        result.append(mod_entry)
 
-# Stats
+result.sort(key=lambda x: (x['category'], x['brand'], x['name'], x['code']))
+
 with_image = sum(1 for p in result if p['image_url'])
 with_price = sum(1 for p in result if p['retail_price'] > 0)
-total_mods = sum(p['mod_count'] for p in result)
-
-print(f"Products: {len(result)}")
+print(f"Total entries: {len(result)}")
+print(f"Parents: {sum(1 for p in result if p['mod_count'] > 0)}")
+print(f"Variants: {sum(1 for p in result if p['mod_count'] == 0)}")
 print(f"With image: {with_image}")
 print(f"With price > 0: {with_price}")
-print(f"Total variants: {total_mods}")
-print(f"\nCategories:")
-cats = defaultdict(int)
-for p in result:
-    cats[f"{p['category']}/{p['brand']}"] += 1
-for c, n in sorted(cats.items(), key=lambda x: -x[1])[:20]:
-    print(f"  {c}: {n}")
 
 with open(OUTPUT, 'w', encoding='utf-8') as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
-print(f"\nSaved: {OUTPUT}")
+print(f"Saved: {OUTPUT}")
