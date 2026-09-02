@@ -41,7 +41,8 @@ def main_menu():
          InlineKeyboardButton(text='📥 Экспорт CSV', callback_data='menu:export')],
         [InlineKeyboardButton(text='💬 Чаты', callback_data='menu:chats'),
          InlineKeyboardButton(text='📨 Шаблоны', callback_data='menu:templates')],
-        [InlineKeyboardButton(text='📋 Аудит-лог', callback_data='menu:audit')],
+        [InlineKeyboardButton(text='📋 Аудит-лог', callback_data='menu:audit'),
+         InlineKeyboardButton(text='⚠️ Мало остатков', callback_data='low_stock')],
     ])
 
 def back_menu():
@@ -1166,6 +1167,60 @@ async def template_use(call: CallbackQuery):
             await call.message.edit_text(f'✅ Шаблон отправлен.', reply_markup=back_menu())
         else:
             await call.answer('Нет активного ответа', show_alert=True)
+    await call.answer()
+
+# ── АНАЛИТИКА ──
+
+@dp.callback_query(F.data == 'analytics')
+async def show_analytics(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        from .models import OrderItem, Review
+        total_orders = await db.scalar(select(func.count(Order.id))) or 0
+        total_revenue = await db.scalar(select(func.coalesce(func.sum(Order.total), 0))) or 0
+        paid_orders = await db.scalar(select(func.count(Order.id)).where(Order.status == 'paid')) or 0
+        published = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
+        total_users = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id)))) or 0
+        total_reviews = await db.scalar(select(func.count(Review.id)).where(Review.status == 'approved')) or 0
+        avg_rating = await db.scalar(select(func.coalesce(func.avg(Review.rating), 0)).where(Review.status == 'approved')) or 0
+        top = (await db.execute(
+            select(OrderItem.title, func.count(OrderItem.id).label('cnt'))
+            .group_by(OrderItem.title).order_by(func.count(OrderItem.id).desc()).limit(5)
+        )).all()
+        status_counts = (await db.execute(
+            select(Order.status, func.count(Order.id)).group_by(Order.status)
+        )).all()
+    status_emoji = {'awaiting_delivery':'📦','awaiting_payment':'💳','paid':'✅','shipped':'🚚','assembling':'🔧','delivered':'🏁','in_transit':'🛵'}
+    status_text = '\n'.join(f'  {status_emoji.get(s, "📋")} {s}: {c}' for s, c in status_counts)
+    top_text = '\n'.join(f'  {i+1}. {t[:30]} — {c} шт.' for i, (t, c) in enumerate(top))
+    text = (
+        f'📊 <b>Аналитика магазина</b>\n\n'
+        f'📦 Заказов: {total_orders} (оплачено: {paid_orders})\n'
+        f'💰 Выручка: {float(total_revenue):,.0f} ₽\n'
+        f'👤 Покупателей: {total_users}\n'
+        f'📦 Товаров в каталоге: {published}\n'
+        f'⭐ Отзывов: {total_reviews} (ср. {float(avg_rating):.1f})\n\n'
+        f'📈 <b>Статусы заказов:</b>\n{status_text}\n\n'
+        f'🏆 <b>Топ товаров:</b>\n{top_text}'
+    )
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=back_menu())
+    await call.answer()
+
+# ── МАЛО ОСТАТКОВ ──
+
+@dp.callback_query(F.data == 'low_stock')
+async def show_low_stock(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    async with SessionLocal() as db:
+        low = (await db.scalars(
+            select(Product).where(Product.status == 'published', Product.stock <= 2, Product.stock > 0).order_by(Product.stock)
+        )).all()
+    if not low:
+        await call.message.edit_text('✅ Все товары в наличии.', reply_markup=back_menu())
+        return await call.answer()
+    lines = [f'⚠️ #{p.id} <b>{p.title[:40]}</b> — остаток: {p.stock}' for p in low[:20]]
+    text = f'⚠️ <b>Мало остатков ({len(low)} товаров):</b>\n\n' + '\n'.join(lines)
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=back_menu())
     await call.answer()
 
 # ── ФОТО / СТИКЕРЫ ──

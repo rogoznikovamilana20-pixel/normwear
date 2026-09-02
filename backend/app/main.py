@@ -652,3 +652,97 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
             'status': 'awaiting_payment',
             'message': 'Заказ принят. Стоимость доставки уточнит менеджер.'
         }
+
+# ── POPULAR PRODUCTS ──
+
+@app.get('/api/popular')
+async def popular_products():
+    from .models import OrderItem
+    from sqlalchemy import func
+    async with SessionLocal() as db:
+        popular = (await db.execute(
+            select(OrderItem.product_id, func.count(OrderItem.id).label('cnt'))
+            .group_by(OrderItem.product_id)
+            .order_by(func.count(OrderItem.id).desc())
+            .limit(10)
+        )).all()
+        product_ids = [r[0] for r in popular]
+        if not product_ids:
+            return []
+        products = {p.id: p for p in (await db.scalars(select(Product).where(Product.id.in_(product_ids), Product.status == 'published'))).all()}
+    def _media_urls(p):
+        raw = json.loads(p.media_json)
+        return [item if item.startswith('http') else f'/media/{p.id}/{i}' for i, item in enumerate(raw)]
+    result = []
+    for pid, cnt in popular:
+        p = products.get(pid)
+        if p:
+            result.append({'id': p.id, 'title': p.title, 'price': float(p.sale_price), 'media': _media_urls(p), 'orders': cnt})
+    return result
+
+# ── ANALYTICS DASHBOARD ──
+
+@app.get('/api/admin/analytics')
+async def admin_analytics(request: Request):
+    _require_admin(request)
+    from .models import OrderItem, Review
+    from sqlalchemy import func
+    async with SessionLocal() as db:
+        total_orders = await db.scalar(select(func.count(Order.id))) or 0
+        total_revenue = await db.scalar(select(func.coalesce(func.sum(Order.total), 0))) or 0
+        paid_orders = await db.scalar(select(func.count(Order.id)).where(Order.status == 'paid')) or 0
+        total_products = await db.scalar(select(func.count(Product.id))) or 0
+        published_products = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
+        total_users = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id)))) or 0
+        total_reviews = await db.scalar(select(func.count(Review.id)).where(Review.status == 'approved')) or 0
+        avg_rating = await db.scalar(select(func.coalesce(func.avg(Review.rating), 0)).where(Review.status == 'approved')) or 0
+        # top products
+        top = (await db.execute(
+            select(OrderItem.title, func.count(OrderItem.id).label('cnt'), func.sum(OrderItem.unit_price * OrderItem.quantity).label('rev'))
+            .group_by(OrderItem.title)
+            .order_by(func.count(OrderItem.id).desc())
+            .limit(5)
+        )).all()
+        # orders by status
+        status_counts = (await db.execute(
+            select(Order.status, func.count(Order.id))
+            .group_by(Order.status)
+        )).all()
+    return {
+        'total_orders': total_orders,
+        'total_revenue': float(total_revenue),
+        'paid_orders': paid_orders,
+        'total_products': total_products,
+        'published_products': published_products,
+        'total_users': total_users,
+        'total_reviews': total_reviews,
+        'avg_rating': round(float(avg_rating), 1),
+        'top_products': [{'title': r[0], 'orders': r[1], 'revenue': float(r[2] or 0)} for r in top],
+        'orders_by_status': {r[0]: r[1] for r in status_counts},
+    }
+
+# ── LOW STOCK WARNING (admin notification) ──
+
+@app.post('/api/admin/check-stock')
+async def check_low_stock(request: Request):
+    _require_admin(request)
+    async with SessionLocal() as db:
+        low = (await db.scalars(
+            select(Product).where(Product.status == 'published', Product.stock <= 2, Product.stock > 0)
+        )).all()
+    return [{'id': p.id, 'title': p.title, 'stock': p.stock} for p in low]
+
+# ── LOYALTY ──
+
+@app.get('/api/loyalty')
+async def loyalty_balance(request: Request, x_telegram_init_data: str = Header(default='')):
+    try:
+        init = validate_init_data(x_telegram_init_data)
+        user_id = int((init.get('user') or {}).get('id', 0))
+    except: raise HTTPException(401, 'Auth required')
+    from .models import LoyaltyBalance
+    async with SessionLocal() as db:
+        bal = await db.scalar(select(LoyaltyBalance).where(LoyaltyBalance.user_telegram_id == user_id))
+    if not bal:
+        return {'points': 0, 'total_earned': 0, 'total_spent': 0}
+    return {'points': bal.points, 'total_earned': bal.total_earned, 'total_spent': bal.total_spent}

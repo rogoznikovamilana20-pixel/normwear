@@ -2,12 +2,12 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from sqlalchemy import select, func
 from .config import settings, get_shop_bot
 from .db import SessionLocal
-from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage
+from .models import Product, Order, OrderItem, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage, LoyaltyBalance, LoyaltyTransaction
 
 dp = Dispatcher()
 
@@ -68,6 +68,46 @@ async def start(message: Message):
     await message.answer(
         'Добро пожаловать в <b>NORMWEAR</b>.\n\n'
         'Вся витрина и заказ — внутри Telegram.',
+        parse_mode='HTML',
+        reply_markup=main_menu()
+    )
+
+@dp.message(Command('catalog'))
+async def cmd_catalog(message: Message):
+    await _send_catalog(message, 0)
+
+@dp.message(Command('help'))
+async def cmd_help(message: Message):
+    await message.answer(
+        '🛍 <b>NORMWEAR — помощь</b>\n\n'
+        '<b>Как заказать:</b>\n'
+        '1. Откройте каталог — кнопка «🛍 Каталог»\n'
+        '2. Выберите товар и размер\n'
+        '3. Добавьте в корзину\n'
+        '4. Оформите заказ — укажите имя, телефон, адрес\n'
+        '5. Оплатите через Telegram Stars\n\n'
+        '<b>Команды:</b>\n'
+        '/catalog — открыть каталог\n'
+        '/loyalty — баланс кэшбэка\n'
+        '/help — эта справка\n\n'
+        '<b>Просто напишите</b> — бот найдёт товар по названию.\n\n'
+        '💬 По любым вопросам — «💬 Поддержка» в меню.',
+        parse_mode='HTML',
+        reply_markup=main_menu()
+    )
+
+@dp.message(Command('loyalty'))
+async def cmd_loyalty(message: Message):
+    async with SessionLocal() as db:
+        bal = await db.scalar(select(LoyaltyBalance).where(LoyaltyBalance.user_telegram_id == message.from_user.id))
+    pts = bal.points if bal else 0
+    total = bal.total_earned if bal else 0
+    await message.answer(
+        f'💰 <b>Кэшбэк</b>\n\n'
+        f'Баланс: <b>{pts} баллов</b>\n'
+        f'Всего заработано: {total} баллов\n\n'
+        f'1 балл = 1 ₽\n'
+        f'Кэшбэк 10% с каждого заказа.',
         parse_mode='HTML',
         reply_markup=main_menu()
     )
@@ -165,7 +205,6 @@ async def on_text(message: Message):
             try:
                 b = get_shop_bot()
                 await b.send_message(admin_id, fwd, parse_mode='HTML', reply_markup=kb)
-                await b.session.close()
             except Exception:
                 pass
         await message.answer('✅ Сообщение отправлено. Ожидайте ответ.', reply_markup=back_menu())
@@ -236,6 +275,23 @@ async def on_successful_payment(message: Message):
                 if order and order.telegram_user_id == message.from_user.id:
                     order.status = 'paid'
                     await db.commit()
+                    # loyalty points: 10% cashback
+                    try:
+                        from .models import LoyaltyBalance, LoyaltyTransaction
+                        pts = int(float(order.total) * 0.10)
+                        if pts > 0:
+                            bal = await db.scalar(select(LoyaltyBalance).where(LoyaltyBalance.user_telegram_id == message.from_user.id))
+                            if not bal:
+                                bal = LoyaltyBalance(user_telegram_id=message.from_user.id, points=0)
+                                db.add(bal)
+                                await db.flush()
+                            bal.points += pts
+                            bal.total_earned += pts
+                            tx = LoyaltyTransaction(user_telegram_id=message.from_user.id, points=pts, type='earned', order_id=order_id, description=f'Кэшбэк за заказ #{order_id}')
+                            db.add(tx)
+                            await db.commit()
+                    except Exception:
+                        pass
             await message.answer(
                 f'✅ Оплата прошла!\n\n'
                 f'Заказ #{order_id} оплачен {payment.total_amount} ⭐\n'
@@ -245,7 +301,7 @@ async def on_successful_payment(message: Message):
             )
             # уведомить админов
             from aiogram import Bot as _Bot
-            bot = _get_shop_bot()
+            bot = get_shop_bot()
             for admin_id in settings.admin_ids:
                 try:
                     await bot.send_message(

@@ -195,3 +195,22 @@ class AdminAudit(Base):
     target: Mapped[str | None] = mapped_column(String(255))
     details: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+class LoyaltyBalance(Base):
+    __tablename__ = 'loyalty_balance'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    total_earned: Mapped[int] = mapped_column(Integer, default=0)
+    total_spent: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+class LoyaltyTransaction(Base):
+    __tablename__ = 'loyalty_transactions'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    points: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(16))
+    order_id: Mapped[int | None] = mapped_column(Integer)
+    description: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

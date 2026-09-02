@@ -58,6 +58,7 @@ function render() {
       <p>Актуальные модели с заказом прямо внутри Telegram</p>
     </section>
     <div class="chips">${cats.map(c => `<button class="${c === state.category ? 'active' : ''}" onclick="setCategory('${esc(c)}')">${esc(c)}</button>`).join('')}</div>
+    <div style="text-align:center;margin:8px 0"><a href="#" onclick="showPopular();return false" style="color:var(--accent);font-size:14px;text-decoration:none">🔥 Популярные товары</a></div>
     <main>${filtered.length ? filtered.map(productCard).join('') : '<div class="empty">Ничего не найдено</div>'}</main>
     ${nav()}
   </div>`;
@@ -99,6 +100,7 @@ window.showProduct = id => {
         ${p.description ? `<div class="desc">${esc(p.description)}</div>` : ''}
       </div>
       ${sizes.length ? `<div class="sizes">${sizes.map((s, i) => `<button class="${i === 0 ? 'active' : ''}" onclick="selectSize(this)">${esc(s)}</button>`).join('')}</div>` : ''}
+      ${sizes.length ? `<div style="text-align:center;margin-top:8px"><a href="#" onclick="showSizeGuide();return false" style="color:var(--text2);font-size:13px;text-decoration:underline">📏 Гид по размерам</a></div>` : ''}
       <button class="buy" onclick="addToCart(${p.id})" style="padding:14px;font-size:15px">В корзину — ${money(p.price)}</button>
       ${nav()}
     </div>`;
@@ -480,6 +482,70 @@ window.showOrderDetail = async (orderId) => {
         <button class="buy" onclick="window.open('https://t.me/norm_shop_bot?start=support','_blank')" style="width:100%">💬 Написать в поддержку</button>
       </div>
     </main>
+    ${nav()}
+  </div>`;
+};
+
+// ── SIZE GUIDE ──
+
+window.showSizeGuide = () => {
+  state.view = 'sizeguide';
+  app.innerHTML = `<div class="app">
+    <header>
+      <button class="back" onclick="window._detailProduct ? showProduct(window._detailProduct.id) : render()">← Назад</button>
+      <div class="brand">ГИД ПО РАЗМЕРАМ</div>
+    </header>
+    <main style="padding:16px;line-height:1.7">
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:12px">👔 Мужская одежда</h3>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;color:var(--text2)">
+        <tr style="border-bottom:1px solid var(--bg3)"><td><b>Размер</b></td><td><b>Грудь</b></td><td><b>Талия</b></td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>S</td><td>88-92</td><td>73-78</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>M</td><td>92-96</td><td>78-83</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>L</td><td>96-100</td><td>83-88</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>XL</td><td>100-104</td><td>88-93</td></tr>
+        <tr><td>XXL</td><td>104-108</td><td>93-98</td></tr>
+      </table>
+
+      <h3 style="font-size:16px;font-weight:700;margin:20px 0 12px">👟 Обувь</h3>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;color:var(--text2)">
+        <tr style="border-bottom:1px solid var(--bg3)"><td><b>EU</b></td><td><b>US</b></td><td><b>см</b></td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>38</td><td>5</td><td>24.0</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>39</td><td>6</td><td>24.5</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>40</td><td>7</td><td>25.0</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>41</td><td>8</td><td>25.5</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>42</td><td>9</td><td>26.5</td></tr>
+        <tr style="border-bottom:1px solid var(--bg3)"><td>43</td><td>10</td><td>27.5</td></tr>
+        <tr><td>44</td><td>11</td><td>28.0</td></tr>
+      </table>
+    </main>
+    ${nav()}
+  </div>`;
+};
+
+// ── POPULAR PRODUCTS ──
+
+window.showPopular = async () => {
+  state.view = 'popular';
+  try {
+    const r = await fetch('/api/popular');
+    if (r.ok) state.popular = await r.json();
+  } catch (e) { state.popular = []; }
+
+  const items = (state.popular || []).map(p => `<article class="card" onclick="showProduct(${p.id})">
+    <img loading="lazy" src="${p.media?.[0] || ''}" onerror="this.style.display='none'">
+    <div class="meta">
+      <div class="title">${esc(p.title)}</div>
+      <div class="price">${money(p.price)}</div>
+      <button class="buy" onclick="event.stopPropagation();addToCart(${p.id})">В корзину</button>
+    </div>
+  </article>`).join('');
+
+  app.innerHTML = `<div class="app">
+    <header>
+      <button class="back" onclick="render()">← Назад</button>
+      <div class="brand">ПОПУЛЯРНЫЕ</div>
+    </header>
+    <main>${items || '<div class="empty">Пока нет данных</div>'}</main>
     ${nav()}
   </div>`;
 };
