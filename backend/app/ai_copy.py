@@ -1,28 +1,31 @@
 from html import escape
 
 def beautify_post(title: str, description: str, price: float, sizes: list[str]) -> str:
-    size_line = ', '.join(sizes) if sizes else 'уточняйте наличие'
+    size_line = ', '.join(sizes) if sizes else 'уточняйте'
     return (
         f'🔥 <b>{escape(title)}</b>\n\n'
         f'{escape(description[:700])}\n\n'
-        f'📐 Размеры: <b>{escape(size_line)}</b>\n'
+        f'📐 Размерный ряд: <b>{escape(size_line)}</b>\n'
+        f'🚚 Отправка из Москвы\n\n'
         f'💰 Цена: <b>{price:,.0f} ₽</b>\n\n'
-        f'📦 В наличии · Быстрая доставка\n'
-        f'🔄 Возврат 14 дней\n\n'
-        f'🛍 <b>Заказать — кнопка ниже ↓</b>'
+        f'👜 Купить в боте: @norm_shop_bot\n\n'
+        f'— — —\n\n'
+        f'📦 Доставка по всей России 🇷🇺\n'
+        f'💳 Оплата при получении ✅'
     )
 
-def manual_post(title: str, brand: str, description: str, price: float, sizes: list[str], badge: str = '') -> str:
+def manual_post(title: str, brand: str, description: str, price: float, sizes: list[str], material: str = '', badge: str = '') -> str:
     size_line = ', '.join(sizes) if sizes else 'уточняйте'
-    badge_line = f'\n{badge}\n' if badge else ''
-    return (
-        f'🏷 <b>{escape(brand)}</b>\n'
-        f'🔥 <b>{escape(title)}</b>\n'
-        f'{badge_line}\n'
-        f'{escape(description)}\n\n'
-        f'📐 Размеры: <b>{escape(size_line)}</b>\n'
-        f'💰 <b>{price:,.0f} ₽</b>\n\n'
-        f'✅ Качество 1к1 как оригинал · В наличии\n'
-        f'📦 Доставка 1-3 дня · Возврат 14 дней\n\n'
-        f'🛍 <b>Купить — нажми кнопку ↓</b>'
-    )
+    lines = [f'🔥 <b>{escape(title)}</b>\n']
+    if description:
+        lines.append(f'{escape(description)}\n')
+    lines.append(f'📐 Размерный ряд: <b>{escape(size_line)}</b>')
+    if material:
+        lines.append(f'📦 Материал: {escape(material)}')
+    lines.append(f'🚚 Отправка из Москвы\n')
+    lines.append(f'💰 Цена: <b>{price:,.0f} ₽</b>\n')
+    lines.append(f'👜 Купить в боте: @norm_shop_bot\n')
+    lines.append(f'— — —\n')
+    lines.append(f'📦 Доставка по всей России 🇷🇺')
+    lines.append(f'💳 Оплата при получении ✅')
+    return '\n'.join(lines)
