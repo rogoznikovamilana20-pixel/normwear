@@ -167,10 +167,20 @@ async def products(limit: int = 20, offset: int = 0, category: str | None = None
         if q and q.strip():
             count_stmt = count_stmt.where(Product.title.ilike(like))
         total = await db.scalar(count_stmt) or 0
+    def _media_urls(p):
+        raw = json.loads(p.media_json)
+        urls = []
+        for i, item in enumerate(raw):
+            if item.startswith('http'):
+                urls.append(item)
+            else:
+                urls.append(f'/media/{p.id}/{i}')
+        return urls
+
     data = [{
         'id': p.id, 'title': p.title, 'description': p.description or '', 'category': p.category,
         'price': float(p.sale_price), 'stock': p.stock, 'sizes': json.loads(p.sizes_json),
-        'media': [f'/media/{p.id}/{i}' for i, _ in enumerate(json.loads(p.media_json))]
+        'media': _media_urls(p)
     } for p in rows]
     return JSONResponse(content=data, headers={"X-Total-Count": str(total), "X-Limit": str(limit), "X-Offset": str(offset)})
 
@@ -178,7 +188,9 @@ async def products(limit: int = 20, offset: int = 0, category: str | None = None
 async def product(product_id: int):
     async with SessionLocal() as db: p = await db.get(Product, product_id)
     if not p or p.status not in {'published','approved'}: raise HTTPException(404, 'Product not found')
-    return {'id':p.id,'title':p.title,'description':p.description or '', 'category':p.category,'price':float(p.sale_price),'stock':p.stock,'sizes':json.loads(p.sizes_json),'media':[f'/media/{p.id}/{i}' for i, _ in enumerate(json.loads(p.media_json))]}
+    raw = json.loads(p.media_json)
+    media = [item if item.startswith('http') else f'/media/{p.id}/{i}' for i, item in enumerate(raw)]
+    return {'id':p.id,'title':p.title,'description':p.description or '','category':p.category,'price':float(p.sale_price),'stock':p.stock,'sizes':json.loads(p.sizes_json),'media':media}
 
 @app.get('/media/{product_id}/{index}')
 async def media(product_id: int, index: int):
