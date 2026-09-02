@@ -1,4 +1,4 @@
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, InputMediaPhoto
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, InputMediaPhoto, URLInputFile
 from .config import settings, get_shop_bot
 from .ai_copy import manual_post
 
@@ -24,10 +24,14 @@ class ChannelPublisher:
         ])
         usable = [p for p in media_paths if p]
         if len(usable) == 1:
-            msg = await self.bot.send_photo(settings.shop_channel_id, FSInputFile(usable[0]), caption=caption, parse_mode='HTML', reply_markup=markup)
+            media = URLInputFile(usable[0]) if usable[0].startswith('http') else usable[0]
+            msg = await self.bot.send_photo(settings.shop_channel_id, media, caption=caption, parse_mode='HTML', reply_markup=markup)
             return msg.message_id
         if usable:
-            group = [InputMediaPhoto(media=FSInputFile(p), parse_mode='HTML' if i == 0 else None, caption=caption if i == 0 else None) for i, p in enumerate(usable[:10])]
+            group = []
+            for i, u in enumerate(usable[:10]):
+                m = URLInputFile(u) if u.startswith('http') else u
+                group.append(InputMediaPhoto(media=m, parse_mode='HTML' if i == 0 else None, caption=caption if i == 0 else None))
             sent = await self.bot.send_media_group(settings.shop_channel_id, group)
             control = await self.bot.send_message(settings.shop_channel_id, '🛍 Новый товар в каталоге:', reply_markup=markup)
             return control.message_id

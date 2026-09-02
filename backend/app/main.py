@@ -768,24 +768,7 @@ async def publish_to_channel(product_id: int, request: Request):
     http_urls = [m for m in media if m.startswith('http')]
     if not http_urls:
         raise HTTPException(400, 'No CDN photos')
-    import os, tempfile
-    import urllib.request
-    tmp_files = []
-    for url in http_urls[:6]:
-        try:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg', dir='/tmp')
-            urllib.request.urlretrieve(url, tmp.name)
-            tmp_files.append(tmp.name)
-        except Exception as e:
-            print(f'download error: {e}', flush=True)
-    if not tmp_files:
-        raise HTTPException(500, 'Failed to download photos')
-    try:
-        msg_id = await pub.publish(p, tmp_files)
-    finally:
-        for f in tmp_files:
-            try: os.unlink(f)
-            except: pass
+    msg_id = await pub.publish(p, http_urls[:6])
     async with SessionLocal() as db:
         p.channel_message_id = msg_id
         await db.commit()
