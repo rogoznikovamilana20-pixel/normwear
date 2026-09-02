@@ -29,7 +29,54 @@ def _rate_key(request: Request) -> str:
 
 limiter = Limiter(key_func=_rate_key, default_limits=[])
 
-app = FastAPI(title='NORMWEAR Commerce API', version='1.0.0')
+import os as _os, asyncio
+from contextlib import asynccontextmanager
+
+_bot_status = {"shop": "not_started", "admin": "not_started"}
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    from .bot_shop import dp as shop_dp
+    from .bot_admin import dp as admin_dp
+    from aiogram import Bot
+    print("[lifespan] imports OK", flush=True)
+
+    async def _run_bot(name: str, token: str, dp):
+        _bot_status[name] = "starting"
+        backoff = 1
+        while True:
+            try:
+                bot = Bot(token)
+                await bot.delete_webhook(drop_pending_updates=True)
+                _bot_status[name] = "polling"
+                print(f"[{name}] starting polling", flush=True)
+                await dp.start_polling(bot)
+                _bot_status[name] = "stopped"
+                print(f"[{name}] polling ended normally", flush=True)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                _bot_status[name] = f"crashed: {e}"
+                print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+    async def _run_supplier():
+        try:
+            from .supplier_daemon import main as sup_main
+            print("[supplier] starting", flush=True)
+            await sup_main()
+        except Exception as e:
+            print(f"[supplier] error {e}", flush=True)
+
+    if settings.shop_bot_token and len(settings.shop_bot_token) > 20:
+        asyncio.create_task(_run_bot("shop", settings.shop_bot_token, shop_dp))
+    if settings.admin_bot_token and len(settings.admin_bot_token) > 20:
+        asyncio.create_task(_run_bot("admin", settings.admin_bot_token, admin_dp))
+    asyncio.create_task(_run_supplier())
+    print("[lifespan] bots+supplier scheduled", flush=True)
+    yield
+
+app = FastAPI(title='NORMWEAR Commerce API', version='1.0.0', lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda r, e: JSONResponse(status_code=429, content={"detail": "Слишком много запросов, попробуйте позже"}))
 
@@ -51,53 +98,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-import os as _os, asyncio
 for _p in ('/app/miniapp/dist', '/app/miniapp', 'miniapp/dist', 'miniapp', '../miniapp/dist', '../miniapp'):
     if _os.path.isdir(_p):
         app.mount('/app', StaticFiles(directory=_p, html=True), name='miniapp')
         break
-
-@app.on_event("startup")
-async def _startup_bots():
-    # run shop/admin bots and supplier daemon inside same process (Render free single web)
-    try:
-        from .bot_shop import dp as shop_dp
-        from .bot_admin import dp as admin_dp
-        from aiogram import Bot
-        print("[startup] imports OK", flush=True)
-
-        async def _run_bot(name: str, token: str, dp):
-            import random
-            backoff = 1
-            while True:
-                try:
-                    bot = Bot(token)
-                    await bot.delete_webhook(drop_pending_updates=True)
-                    print(f"[{name}] starting polling", flush=True)
-                    await dp.start_polling(bot)
-                    print(f"[{name}] polling ended normally", flush=True)
-                except Exception as e:
-                    import traceback; traceback.print_exc()
-                    print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
-
-        async def _run_supplier():
-            try:
-                from .supplier_daemon import main as sup_main
-                print("[supplier] starting", flush=True)
-                await sup_main()
-            except Exception as e:
-                print(f"[supplier] error {e}", flush=True)
-
-        if settings.shop_bot_token and len(settings.shop_bot_token) > 20:
-            asyncio.create_task(_run_bot("shop_bot", settings.shop_bot_token, shop_dp))
-        if settings.admin_bot_token and len(settings.admin_bot_token) > 20:
-            asyncio.create_task(_run_bot("admin_bot", settings.admin_bot_token, admin_dp))
-        asyncio.create_task(_run_supplier())
-        print("[startup] bots+supplier scheduled", flush=True)
-    except Exception as e:
-        print(f"[startup] failed {e}", flush=True)
 
 class CartLine(BaseModel):
     product_id: int
@@ -126,6 +130,9 @@ class Checkout(BaseModel):
 
 @app.get('/health')
 async def health(): return {'status': 'ok'}
+
+@app.get('/bot-status')
+async def bot_status(): return _bot_status
 
 @app.get('/metrics')
 async def metrics():
