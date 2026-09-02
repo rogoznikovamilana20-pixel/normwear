@@ -1223,6 +1223,60 @@ async def show_low_stock(call: CallbackQuery):
     await call.message.edit_text(text, parse_mode='HTML', reply_markup=back_menu())
     await call.answer()
 
+# ── PUBLISH COMMAND ──
+
+@dp.message(Command('publish'))
+async def cmd_publish(message: Message):
+    if not allowed(message.from_user.id): return
+    args = (message.text or '').split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer('Использование: /publish ID\n\nПример: /publish 6169', reply_markup=back_menu())
+        return
+    pid = int(args[1].strip())
+    await message.answer(f'⏳ Публикация товара #{pid}...', reply_markup=back_menu())
+    try:
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            if not p:
+                await message.answer(f'❌ Товар #{pid} не найден', reply_markup=back_menu())
+                return
+            if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+                p.sale_price = round(float(p.purchase_price) * (1 + settings.default_margin_pct / 100))
+                await db.commit()
+                await db.refresh(p)
+        from .publisher import ChannelPublisher
+        pub = ChannelPublisher()
+        media = json.loads(p.media_json)
+        http_urls = [m for m in media if m.startswith('http')]
+        if not http_urls:
+            await message.answer(f'❌ У товара #{pid} нет фото', reply_markup=back_menu())
+            return
+        msg_id = await pub.publish(p, http_urls[:6])
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            p.channel_message_id = msg_id
+            await db.commit()
+        await message.answer(f'✅ Опубликовано!\n\nТовар: {p.title[:50]}\nЦена: {float(p.sale_price):,.0f} ₽\nMsg ID: {msg_id}', reply_markup=back_menu())
+    except Exception as e:
+        await message.answer(f'❌ Ошибка: {e}', reply_markup=back_menu())
+
+@dp.message(Command('bulkmark'))
+async def cmd_bulkmark(message: Message):
+    if not allowed(message.from_user.id): return
+    args = (message.text or '').split()
+    pct = settings.default_margin_pct
+    if len(args) >= 2 and args[1].replace('.', '').isdigit():
+        pct = float(args[1])
+    async with SessionLocal() as db:
+        rows = (await db.scalars(select(Product).where(Product.status == 'published'))).all()
+        updated = 0
+        for p in rows:
+            if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+                p.sale_price = round(float(p.purchase_price) * (1 + pct / 100))
+                updated += 1
+        await db.commit()
+    await message.answer(f'✅ Наценка {pct}% применена\nОбновлено: {updated} товаров', reply_markup=back_menu())
+
 # ── ФОТО / СТИКЕРЫ ──
 
 @dp.message(F.sticker | F.photo)

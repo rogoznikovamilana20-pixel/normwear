@@ -749,6 +749,75 @@ async def check_low_stock(request: Request):
         )).all()
     return [{'id': p.id, 'title': p.title, 'stock': p.stock} for p in low]
 
+# ── BULK MARKUP ──
+
+@app.post('/api/admin/apply-markup')
+async def apply_markup(request: Request):
+    _require_admin(request)
+    body = await request.json()
+    pct = body.get('pct', settings.default_margin_pct)
+    async with SessionLocal() as db:
+        rows = (await db.scalars(select(Product).where(Product.status == 'published'))).all()
+        updated = 0
+        for p in rows:
+            if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+                p.sale_price = round(float(p.purchase_price) * (1 + pct / 100))
+                updated += 1
+        await db.commit()
+    return {'updated': updated, 'total': len(rows), 'pct': pct}
+
+# ── DELETE CHANNEL POST ──
+
+@app.delete('/api/admin/channel-message/{message_id}')
+async def delete_channel_message(message_id: int, request: Request):
+    _require_admin(request)
+    try:
+        bot = get_shop_bot()
+        await bot.delete_message(settings.shop_channel_id, message_id)
+        return {'deleted': message_id}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ── BULK PUBLISH ──
+
+@app.post('/api/admin/bulk-publish')
+async def bulk_publish(request: Request):
+    _require_admin(request)
+    body = await request.json()
+    product_ids = body.get('product_ids', [])
+    if not product_ids:
+        raise HTTPException(400, 'product_ids required')
+    import asyncio
+    from .publisher import ChannelPublisher
+    pub = ChannelPublisher()
+    results = []
+    for i, pid in enumerate(product_ids):
+        try:
+            async with SessionLocal() as db:
+                p = await db.get(Product, pid)
+                if not p:
+                    results.append({'id': pid, 'error': 'not found'})
+                    continue
+                if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+                    p.sale_price = round(float(p.purchase_price) * (1 + settings.default_margin_pct / 100))
+                    await db.commit()
+                    await db.refresh(p)
+            media = json.loads(p.media_json)
+            http_urls = [m for m in media if m.startswith('http')]
+            if not http_urls:
+                results.append({'id': pid, 'error': 'no photos'})
+                continue
+            msg_id = await pub.publish(p, http_urls[:6])
+            async with SessionLocal() as db:
+                p.channel_message_id = msg_id
+                await db.commit()
+            results.append({'id': pid, 'message_id': msg_id, 'price': float(p.sale_price)})
+        except Exception as e:
+            results.append({'id': pid, 'error': str(e)})
+        if i < len(product_ids) - 1:
+            await asyncio.sleep(300)
+    return {'results': results}
+
 # ── PUBLISH PRODUCT TO CHANNEL ──
 
 @app.post('/api/admin/publish/{product_id}')
