@@ -6,8 +6,8 @@ import json, sys, asyncio, httpx, re
 from pathlib import Path
 
 API_URL = "https://normwear-api.onrender.com"
-EXCEL_JSON = Path(__file__).parent.parent / "moysklad_excel_products.json"
-MARGIN = 2.0  # retail = wholesale * 2
+EXCEL_JSON = Path(__file__).parent.parent / 'moysklad_excel_products.json'
+DEFAULT_MARGIN = 1.35  # 35% markup on wholesale
 
 async def main():
     if not EXCEL_JSON.exists():
@@ -77,18 +77,13 @@ async def main():
         # Category
         category = ep.get('category', '')
 
-        # Prices
-        purchase = ep.get('purchase_price', 0)
-        retail = ep.get('retail_price', 0)
+        # Prices — wholesale = purchase, sale = wholesale * margin
         wholesale = ep.get('wholesale_price', 0)
-
-        # Use wholesale as purchase price (opit), retail as sale price
+        purchase = wholesale if wholesale > 0 else ep.get('purchase_price', 0)
         if wholesale > 0:
-            purchase = wholesale
-        if retail > 0:
-            sale = retail
+            sale = round(wholesale * DEFAULT_MARGIN)
         elif purchase > 0:
-            sale = round(purchase * MARGIN)
+            sale = round(purchase * DEFAULT_MARGIN)
         else:
             sale = 1500  # minimum
 
