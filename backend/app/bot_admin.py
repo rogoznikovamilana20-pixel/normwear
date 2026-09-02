@@ -1,4 +1,5 @@
-import asyncio, time
+import asyncio, csv, time
+from datetime import datetime, timezone, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,6 +12,7 @@ import json
 
 _broadcast_last: dict[int, float] = {}
 _user_state: dict[int, str] = {}
+_chat_reply_to: dict[int, int] = {}
 
 dp = Dispatcher()
 
@@ -381,7 +383,7 @@ async def text_input(message: Message):
         if len(raw) > 4000:
             return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
         from datetime import datetime, timedelta
-        now_dt = datetime.utcnow()
+        now_dt = datetime.now(timezone.utc)
         week_ago = now_dt - timedelta(weeks=1)
         async with SessionLocal() as db:
             if segment == 'buyers':
@@ -459,7 +461,7 @@ async def text_input(message: Message):
             if session:
                 msg = ChatMessage(session_id=session.id, sender_id=uid, sender_role='admin', text=text)
                 db.add(msg)
-                session.last_message_at = datetime.utcnow()
+                session.last_message_at = datetime.now(timezone.utc)
                 await db.commit()
         from aiogram import Bot
         bot = Bot(settings.shop_bot_token)
@@ -616,7 +618,7 @@ async def stats_period(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
     period = call.data.split(':')[1]
     from datetime import datetime, timedelta
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if period == 'day': since = now - timedelta(days=1)
     elif period == 'week': since = now - timedelta(weeks=1)
     elif period == 'month': since = now - timedelta(days=30)
@@ -826,7 +828,7 @@ async def ref_set_bonus_start(call: CallbackQuery):
 async def menu_segments(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
     from datetime import datetime, timedelta
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     week_ago = now - timedelta(weeks=1)
     async with SessionLocal() as db:
         buyers = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id))).where(Order.created_at >= week_ago)) or 0
@@ -908,23 +910,22 @@ async def export_csv(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
     period = call.data.split(':')[1]
     await call.answer('Формирую файл...')
-    from datetime import timedelta
     import io
     async with SessionLocal() as db:
         q = select(Order).order_by(Order.created_at.desc())
         if period == 'month':
-            month_ago = datetime.utcnow() - timedelta(days=30)
+            month_ago = datetime.now(timezone.utc) - timedelta(days=30)
             q = q.where(Order.created_at >= month_ago)
         orders = (await db.scalars(q)).all()
         if not orders:
             return await call.message.edit_text('Нет заказов за этот период.', reply_markup=back_menu())
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(['ID', 'Телефон', 'Сумма', 'Скидка', 'Статус', 'Трек', 'Дата'])
+        w.writerow(['ID', 'Телефон', 'Сумма', 'Статус', 'Оплата', 'Дата'])
         for o in orders:
             w.writerow([
-                o.id, o.phone, float(o.total_amount), float(o.discount_amount),
-                o.status, o.tracking_number or '', o.created_at.strftime('%Y-%m-%d %H:%M'),
+                o.id, o.phone, float(o.total or o.subtotal),
+                o.status, o.payment_method or '', o.created_at.strftime('%Y-%m-%d %H:%M'),
             ])
         buf.seek(0)
         content = buf.getvalue().encode('utf-8-sig')
@@ -1140,7 +1141,7 @@ async def template_use(call: CallbackQuery):
                 if session:
                     msg = ChatMessage(session_id=session.id, sender_id=call.from_user.id, sender_role='admin', text=text)
                     db.add(msg)
-                    session.last_message_at = datetime.utcnow()
+                session.last_message_at = datetime.now(timezone.utc)
                     await db.commit()
             from aiogram import Bot
             bot = Bot(settings.shop_bot_token)

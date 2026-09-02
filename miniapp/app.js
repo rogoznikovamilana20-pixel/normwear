@@ -94,8 +94,13 @@ window.selectSize = btn => {
 // ── CART ──
 
 window.addToCart = id => {
-  state.cart[id] = state.cart[id] || { qty: 0 };
+  const p = state.products.find(x => x.id === id);
+  const sizes = p ? JSON.parse(p.sizes_json || '[]') : [];
+  const sizeEl = document.querySelector('.sizes button.active');
+  const selectedSize = sizeEl ? sizeEl.textContent.trim() : (sizes[0] || null);
+  state.cart[id] = state.cart[id] || { qty: 0, size: selectedSize };
   state.cart[id].qty++;
+  if (selectedSize) state.cart[id].size = selectedSize;
   saveCart();
   tg?.HapticFeedback?.impactOccurred('light');
   if (state.view === 'catalog') render();
@@ -154,8 +159,15 @@ window.applyPromo = async () => {
     const el = document.getElementById('promo-result');
     if (!r.ok) { el.style.display = 'block'; el.style.color = '#ff4444'; el.textContent = d.detail || 'Ошибка'; promoDiscount = 0; return; }
     el.style.display = 'block';
-    promoDiscount = d.discount_amount || 0;
-    el.textContent = `✅ Скидка: -${money(promoDiscount)}`;
+    promoDiscount = d.discount_value || 0;
+    if (d.discount_type === 'percent') {
+      const items = Object.entries(state.cart).map(([id, x]) => { const p = state.products.find(p => p.id == id); return p ? { ...x, p } : null; }).filter(Boolean);
+      const total = items.reduce((s, x) => s + x.p.price * x.qty, 0);
+      promoDiscount = Math.round(total * promoDiscount / 100);
+      el.textContent = `✅ Скидка: -${money(promoDiscount)} (${d.discount_value}%)`;
+    } else {
+      el.textContent = `✅ Скидка: -${money(promoDiscount)}`;
+    }
     const totalEl = document.getElementById('total-display');
     const items = Object.entries(state.cart).map(([id, x]) => { const p = state.products.find(p => p.id == id); return p ? { ...x, p } : null; }).filter(Boolean);
     const total = items.reduce((s, x) => s + x.p.price * x.qty, 0);
@@ -176,7 +188,7 @@ window.checkout = async () => {
     return;
   }
 
-  const lines = items.map(([id, x]) => ({ product_id: Number(id), quantity: x.qty, size: null }));
+  const lines = items.map(([id, x]) => ({ product_id: Number(id), quantity: x.qty, size: x.size || null }));
   const payload = { lines, name, phone, city, address, comment: comment || null, payment_method: 'stars', promo_code: promo || null };
 
   const r = await fetch('/api/orders', {

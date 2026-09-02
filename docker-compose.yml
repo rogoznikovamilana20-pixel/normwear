@@ -28,6 +28,7 @@ services:
       redis: {condition: service_healthy}
     ports: ["8000:8000"]
     volumes: [supplier_media:/app/media/supplier]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
@@ -35,32 +36,6 @@ services:
       retries: 10
       start_period: 15s
     command: sh -c "python -m app.init_db && uvicorn app.main:app --host 0.0.0.0 --port 8000"
-
-  shop_bot:
-    build: .
-    env_file: .env
-    depends_on:
-      api: {condition: service_healthy}
-    restart: unless-stopped
-    command: python -m app.bot_shop
-
-  admin_bot:
-    build: .
-    env_file: .env
-    depends_on:
-      api: {condition: service_healthy}
-    volumes: [supplier_media:/app/media/supplier]
-    restart: unless-stopped
-    command: python -m app.bot_admin
-
-  supplier_sync:
-    build: .
-    env_file: .env
-    depends_on:
-      api: {condition: service_healthy}
-    volumes: [supplier_media:/app/media/supplier]
-    restart: unless-stopped
-    command: python -m app.supplier_daemon
 
 volumes:
   pgdata:

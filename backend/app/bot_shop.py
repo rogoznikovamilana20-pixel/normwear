@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -92,7 +93,7 @@ async def support_cb(call: CallbackQuery):
             db.add(session)
             await db.commit()
             await db.refresh(session)
-    _chat_mode[uid] = True
+    _support_mode[uid] = True
     # показать последние 5 сообщений
     async with SessionLocal() as db:
         msgs = (await db.scalars(
@@ -137,9 +138,9 @@ async def on_text(message: Message):
         return
 
     # live chat
-    if _chat_mode.get(message.from_user.id):
+    if _support_mode.get(message.from_user.id):
         if text == '⬅️ Меню':
-            _chat_mode.pop(message.from_user.id, None)
+            _support_mode.pop(message.from_user.id, None)
             return await message.answer('Главное меню:', reply_markup=main_menu())
         user = message.from_user
         async with SessionLocal() as db:
@@ -151,7 +152,7 @@ async def on_text(message: Message):
                 await db.refresh(session)
             msg = ChatMessage(session_id=session.id, sender_id=user.id, sender_role='user', text=text)
             db.add(msg)
-            session.last_message_at = datetime.utcnow()
+            session.last_message_at = datetime.now(timezone.utc)
             await db.commit()
         # уведомить админов
         fwd = (f'💬 <b>Чат #{session.id}</b>\n'

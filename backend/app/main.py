@@ -1,5 +1,8 @@
 import json
+import hashlib
+import hmac
 from decimal import Decimal
+from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +16,17 @@ from .db import SessionLocal
 from .models import Product, Order, OrderItem
 from .auth import validate_init_data
 from .config import settings
+
+def _require_admin(request: Request) -> None:
+    if not settings.admin_ids:
+        return
+    token = request.headers.get('x-admin-token', '')
+    if not token:
+        raise HTTPException(401, 'Admin token required')
+    import hashlib, hmac as _hmac
+    expected = hashlib.sha256(f"normwear-{settings.admin_bot_token[-8:]}".encode()).hexdigest()[:32]
+    if not _hmac.compare_digest(token, expected):
+        raise HTTPException(403, 'Invalid admin token')
 
 def _rate_key(request: Request) -> str:
     # prefer telegram user id from header if present, else IP
@@ -225,6 +239,7 @@ async def media(product_id: int, index: int):
 @app.post('/api/products')
 @limiter.limit("60/minute")
 async def create_product(request: Request):
+    _require_admin(request)
     from .models import Product
     try:
         body = await request.json()
@@ -258,6 +273,7 @@ async def create_product(request: Request):
 
 @app.post('/api/products/bulk')
 async def bulk_create(request: Request):
+    _require_admin(request)
     from .models import Product
     try:
         body = await request.json()
@@ -300,6 +316,7 @@ async def bulk_create(request: Request):
 @app.post('/api/products/bulk-publish')
 @limiter.limit("5/minute")
 async def bulk_publish(request: Request):
+    _require_admin(request)
     from .models import Product
     async with SessionLocal() as db:
         result = await db.execute(
@@ -315,6 +332,7 @@ async def bulk_publish(request: Request):
 
 @app.post('/api/products/bulk-update')
 async def bulk_update(request: Request):
+    _require_admin(request)
     from .models import Product
     import re as _re
     try:
@@ -427,7 +445,7 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                             promo_discount = subtotal
                         promo.used_count += 1
             final_total = subtotal - promo_discount
-            order = Order(telegram_user_id=telegram_user_id, status='awaiting_delivery', subtotal=subtotal, total=final_total, customer_name=checkout.name.strip(), phone=checkout.phone.strip(), city=checkout.city.strip(), address=checkout.address.strip(), comment=checkout.comment.strip() if checkout.comment else None, payment_method=checkout.payment_method)
+            order = Order(telegram_user_id=telegram_user_id, status='awaiting_payment', subtotal=subtotal, total=final_total, customer_name=checkout.name.strip(), phone=checkout.phone.strip(), city=checkout.city.strip(), address=checkout.address.strip(), comment=checkout.comment.strip() if checkout.comment else None, payment_method=checkout.payment_method)
             db.add(order)
             await db.flush()
             for p, size, qty in verified:
@@ -484,6 +502,7 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
             pass
         # generate Stars invoice link if payment_method == 'stars'
         invoice_link = None
+        stars_amount = None
         if checkout.payment_method == 'stars':
             try:
                 from aiogram import Bot
@@ -507,9 +526,9 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
             'order_id': order_id,
             'subtotal': order_snapshot['subtotal'],
             'delivery': None,
-            'total': None,
-            'stars_amount': stars_amount if checkout.payment_method == 'stars' else None,
+            'total': float(final_total),
+            'stars_amount': stars_amount,
             'invoice_link': invoice_link,
-            'status': 'awaiting_delivery',
+            'status': 'awaiting_payment',
             'message': 'Заказ принят. Стоимость доставки уточнит менеджер.'
         }
