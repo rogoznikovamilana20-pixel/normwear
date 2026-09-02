@@ -758,7 +758,6 @@ async def publish_to_channel(product_id: int, request: Request):
         p = await db.get(Product, product_id)
         if not p:
             raise HTTPException(404, 'Product not found')
-        # apply 35% markup if sale_price equals purchase_price
         if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
             p.sale_price = float(p.purchase_price) * (1 + settings.default_margin_pct / 100)
             await db.commit()
@@ -769,25 +768,21 @@ async def publish_to_channel(product_id: int, request: Request):
     http_urls = [m for m in media if m.startswith('http')]
     if not http_urls:
         raise HTTPException(400, 'No CDN photos')
-    import tempfile, httpx
+    import os, tempfile
+    import urllib.request
     tmp_files = []
-    async with httpx.AsyncClient() as client:
-        for url in http_urls[:6]:
-            try:
-                resp = await client.get(url, timeout=30)
-                if resp.status_code == 200:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-                    tmp.write(resp.content)
-                    tmp.close()
-                    tmp_files.append(tmp.name)
-            except Exception:
-                pass
+    for url in http_urls[:6]:
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg', dir='/tmp')
+            urllib.request.urlretrieve(url, tmp.name)
+            tmp_files.append(tmp.name)
+        except Exception as e:
+            print(f'download error: {e}', flush=True)
     if not tmp_files:
         raise HTTPException(500, 'Failed to download photos')
     try:
         msg_id = await pub.publish(p, tmp_files)
     finally:
-        import os
         for f in tmp_files:
             try: os.unlink(f)
             except: pass
