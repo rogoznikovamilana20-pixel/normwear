@@ -5,9 +5,8 @@ from .pipeline import ingest_supplier
 async def _check_cart_reminders():
     from .db import SessionLocal
     from .models import CartReminder, Product
-    from .config import settings
+    from .config import settings, get_shop_bot
     from sqlalchemy import select
-    from aiogram import Bot
     cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
     async with SessionLocal() as db:
         stale = (await db.scalars(
@@ -25,9 +24,8 @@ async def _check_cart_reminders():
                 lines = [f"• {p.title} — {float(p.sale_price):,.0f} ₽" for p in products]
                 text = "🛒 <b>Вы забыли товары в корзине!</b>\n\n" + "\n".join(lines)
                 try:
-                    bot = Bot(settings.shop_bot_token)
+                    bot = get_shop_bot()
                     await bot.send_message(cr.user_telegram_id, text, parse_mode='HTML')
-                    await bot.session.close()
                 except Exception:
                     pass
         await db.commit()

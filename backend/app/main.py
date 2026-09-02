@@ -15,7 +15,7 @@ from sqlalchemy import select
 from .db import SessionLocal
 from .models import Product, Order, OrderItem
 from .auth import validate_init_data
-from .config import settings
+from .config import settings, get_shop_bot, get_admin_bot
 
 def _require_admin(request: Request) -> None:
     if not settings.admin_ids:
@@ -374,6 +374,57 @@ async def bulk_update(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={'detail': str(e)})
 
+@app.get('/api/favorites')
+async def get_favorites(request: Request, x_telegram_init_data: str = Header(default='')):
+    try:
+        init = validate_init_data(x_telegram_init_data)
+        user_id = int((init.get('user') or {}).get('id', 0))
+    except: raise HTTPException(401, 'Auth required')
+    from .models import Favorite
+    async with SessionLocal() as db:
+        favs = (await db.scalars(select(Favorite).where(Favorite.user_telegram_id == user_id))).all()
+    return [{'id': f.product_id} for f in favs]
+
+@app.post('/api/favorites/{product_id}')
+async def toggle_favorite(product_id: int, request: Request, x_telegram_init_data: str = Header(default='')):
+    try:
+        init = validate_init_data(x_telegram_init_data)
+        user_id = int((init.get('user') or {}).get('id', 0))
+    except: raise HTTPException(401, 'Auth required')
+    from .models import Favorite
+    async with SessionLocal() as db:
+        existing = await db.scalar(select(Favorite).where(Favorite.user_telegram_id == user_id, Favorite.product_id == product_id))
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+            return {'action': 'removed'}
+        else:
+            db.add(Favorite(user_telegram_id=user_id, product_id=product_id))
+            await db.commit()
+            return {'action': 'added'}
+
+@app.get('/api/my-orders')
+async def my_orders(request: Request, x_telegram_init_data: str = Header(default='')):
+    try:
+        init = validate_init_data(x_telegram_init_data)
+        user_id = int((init.get('user') or {}).get('id', 0))
+    except: raise HTTPException(401, 'Auth required')
+    async with SessionLocal() as db:
+        orders = (await db.scalars(
+            select(Order).where(Order.telegram_user_id == user_id).order_by(Order.id.desc()).limit(20)
+        )).all()
+    return [{'id': o.id, 'status': o.status, 'total': float(o.total) if o.total else None, 'created_at': o.created_at.strftime('%d.%m.%Y %H:%M') if o.created_at else ''} for o in orders]
+
+@app.delete('/api/products/{product_id}')
+async def delete_product(product_id: int, request: Request):
+    _require_admin(request)
+    async with SessionLocal() as db:
+        p = await db.get(Product, product_id)
+        if not p: raise HTTPException(404, 'Product not found')
+        await db.delete(p)
+        await db.commit()
+    return {'deleted': product_id}
+
 @app.post('/api/session/validate')
 @limiter.limit("30/minute")
 async def validate(request: Request, x_telegram_init_data: str = Header(default='')):
@@ -393,7 +444,7 @@ async def promo_validate(request: Request, promo: PromoRequest, x_telegram_init_
     async with SessionLocal() as db:
         p = await db.scalar(select(PromoCode).where(PromoCode.code == promo.code.upper(), PromoCode.active == True))
         if not p: raise HTTPException(404, 'Промокод не найден')
-        if p.expires_at and p.expires_at < datetime.utcnow(): raise HTTPException(400, 'Промокод истёк')
+        if p.expires_at and p.expires_at < datetime.now(timezone.utc): raise HTTPException(400, 'Промокод истёк')
         if p.used_count >= p.max_uses: raise HTTPException(400, 'Промокод использован')
     return {'code': p.code, 'discount_type': p.discount_type, 'discount_value': float(p.discount_value), 'min_order': float(p.min_order)}
 
@@ -435,7 +486,7 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                 from .models import PromoCode
                 from datetime import datetime
                 promo = await db.scalar(select(PromoCode).where(PromoCode.code == checkout.promo_code.upper(), PromoCode.active == True))
-                if promo and (not promo.expires_at or promo.expires_at >= datetime.utcnow()) and promo.used_count < promo.max_uses:
+                if promo and (not promo.expires_at or promo.expires_at >= datetime.now(timezone.utc)) and promo.used_count < promo.max_uses:
                     if subtotal >= promo.min_order:
                         if promo.discount_type == 'percent':
                             promo_discount = subtotal * Decimal(str(promo.discount_value)) / Decimal('100')
@@ -483,14 +534,14 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                     f"Товары:\n" + "\n".join(f" - {t} {f'({s})' if s else ''} x{qty} = {price:,.0f} ₽" for t, s, qty, price in order_snapshot['items'])
                 )
                 async def _notify():
-                    bot = Bot(settings.admin_bot_token)
+                    bot = get_admin_bot()
                     for aid in settings.admin_ids:
                         try:
                             await bot.send_message(aid, text)
                         except Exception:
                             pass
                     try:
-                        await bot.session.close()
+
                     except Exception:
                         pass
                 try:
@@ -507,7 +558,7 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
             try:
                 from aiogram import Bot
                 from aiogram.types import LabeledPrice
-                bot = Bot(settings.shop_bot_token)
+                bot = get_shop_bot()
                 # convert rubles to Stars (1 Star ≈ 2 rubles, min 1)
                 stars_amount = max(1, int(float(final_total) / 2))
                 prices = [LabeledPrice(label='Заказ', amount=stars_amount)]
@@ -519,7 +570,6 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                     currency='XTR',
                     prices=prices,
                 )
-                await bot.session.close()
             except Exception as e:
                 print(f'Stars invoice error: {e}', flush=True)
         return {

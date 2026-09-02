@@ -1,11 +1,10 @@
-from aiogram import Bot
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, InputMediaPhoto
-from .config import settings
+from .config import settings, get_shop_bot
 from .ai_copy import beautify_post
 
 class ChannelPublisher:
     def __init__(self):
-        self.bot = Bot(settings.shop_bot_token)
+        self.bot = get_shop_bot()
 
     async def publish(self, product, media_paths: list[str]):
         caption = beautify_post(product.title, product.description or '', float(product.sale_price), __import__('json').loads(product.sizes_json))

@@ -28,3 +28,21 @@ class Settings(BaseSettings):
         return {int(x.strip()) for x in self.admin_telegram_ids.split(',') if x.strip().isdigit()}
 
 settings = Settings()
+
+# Shared bot instances — reuse HTTP sessions instead of creating new Bot() per notification
+_shop_bot = None
+_admin_bot = None
+
+def get_shop_bot():
+    global _shop_bot
+    if _shop_bot is None:
+        from aiogram import Bot
+        _shop_bot = Bot(settings.shop_bot_token)
+    return _shop_bot
+
+def get_admin_bot():
+    global _admin_bot
+    if _admin_bot is None:
+        from aiogram import Bot
+        _admin_bot = Bot(settings.admin_bot_token)
+    return _admin_bot

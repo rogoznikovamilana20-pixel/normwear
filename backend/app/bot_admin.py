@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select, func
-from .config import settings
+from .config import settings, get_shop_bot, get_admin_bot
 from .db import SessionLocal
 from .models import Product, Order, BannedProduct, SupportTicket, PromoCode, OrderItem, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage, AdminAudit
 from .publisher import ChannelPublisher
@@ -396,7 +396,7 @@ async def text_input(message: Message):
                 user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
         if not user_ids:
             return await message.answer('Нет пользователей в этом сегменте.', reply_markup=back_menu())
-        bot = Bot(settings.shop_bot_token)
+        bot = get_shop_bot()
         sent, failed = 0, 0
         for uid_seg in user_ids:
             try:
@@ -405,7 +405,7 @@ async def text_input(message: Message):
                 await asyncio.sleep(0.05)
             except Exception:
                 failed += 1
-        await bot.session.close()
+
         await message.answer(f'✅ Отправлено: {sent}\n❌ Ошибки: {failed}', reply_markup=back_menu())
         await audit(uid, 'broadcast', segment, f'sent={sent}, failed={failed}')
 
@@ -464,12 +464,12 @@ async def text_input(message: Message):
                 session.last_message_at = datetime.now(timezone.utc)
                 await db.commit()
         from aiogram import Bot
-        bot = Bot(settings.shop_bot_token)
+        bot = get_shop_bot()
         try:
             await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
         except Exception:
             pass
-        await bot.session.close()
+
         await message.answer(f'✅ Ответ отправлен пользователю {user_id}.', reply_markup=back_menu())
         await audit(uid, 'chat_reply', str(user_id), text[:100])
 
@@ -491,13 +491,13 @@ async def text_input(message: Message):
         if len(raw) > 4000:
             return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
         try:
-            bot = Bot(settings.shop_bot_token)
+            bot = get_shop_bot()
             if message.reply_to_message and message.reply_to_message.photo:
                 photo = message.reply_to_message.photo[-1].file_id
                 await bot.send_photo(settings.shop_channel_id, photo, caption=raw, parse_mode='HTML')
             else:
                 await bot.send_message(settings.shop_channel_id, raw, parse_mode='HTML')
-            await bot.session.close()
+    
             _broadcast_last[uid] = now
             await message.answer('✅ Опубликовано в канал.', reply_markup=back_menu())
         except Exception as e:
@@ -575,13 +575,13 @@ async def change_status(call: CallbackQuery):
     await audit(call.from_user.id, 'order_status', f'#{oid}', status_labels.get(new_status, new_status))
     # уведомить клиента
     try:
-        bot = Bot(settings.shop_bot_token)
+        bot = get_shop_bot()
         await bot.send_message(
             o.telegram_user_id,
             f'📦 Заказ #{oid}\n\nСтатус изменён: <b>{status_labels.get(new_status, new_status)}</b>',
             parse_mode='HTML',
         )
-        await bot.session.close()
+
     except Exception:
         pass
     await call.answer(f'✅ {status_labels.get(new_status, new_status)}')
@@ -868,7 +868,7 @@ async def support_reply(message: Message):
         )
     if not ticket:
         return
-    bot = Bot(settings.shop_bot_token)
+    bot = get_shop_bot()
     try:
         await bot.send_message(
             ticket.user_telegram_id,
@@ -879,7 +879,7 @@ async def support_reply(message: Message):
     except Exception as e:
         await message.answer(f'❌ Ошибка: {e}')
     finally:
-        await bot.session.close()
+
 
 # ── ЛЮБОЕ ТЕКСТОВОЕ СООБЩЕНИЕ (не в стейте) ──
 
@@ -1058,12 +1058,11 @@ async def chat_close(call: CallbackQuery):
     await audit(call.from_user.id, 'chat_close', str(user_id))
     await call.answer('Чат закрыт')
     from aiogram import Bot
-    bot = Bot(settings.shop_bot_token)
+    bot = get_shop_bot()
     try:
         await bot.send_message(user_id, '🔒 Чат с поддержкой закрыт.', reply_markup=main_menu())
     except Exception:
         pass
-    await bot.session.close()
     await call.message.edit_text(f'✅ Чат с {user_id} закрыт.', reply_markup=back_menu())
 
 # ── ШАБЛОНЫ ──
@@ -1144,12 +1143,12 @@ async def template_use(call: CallbackQuery):
                 session.last_message_at = datetime.now(timezone.utc)
                     await db.commit()
             from aiogram import Bot
-            bot = Bot(settings.shop_bot_token)
+            bot = get_shop_bot()
             try:
                 await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
             except Exception:
                 pass
-            await bot.session.close()
+    
             _user_state.pop(call.from_user.id, None)
             _chat_reply_to.pop(call.from_user.id, None)
             await call.message.edit_text(f'✅ Шаблон отправлен.', reply_markup=back_menu())
@@ -1167,6 +1166,6 @@ async def on_media(message: Message):
     await message.answer('Принимаю только текст.', reply_markup=back_menu())
 
 async def main():
-    await dp.start_polling(Bot(settings.admin_bot_token))
+    await dp.start_polling(get_admin_bot())
 
 if __name__ == '__main__': asyncio.run(main())

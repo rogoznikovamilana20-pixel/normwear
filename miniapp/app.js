@@ -6,14 +6,23 @@ const state = {
   cart: JSON.parse(localStorage.getItem('normwear_cart') || '{}'),
   category: 'Все',
   query: '',
-  view: 'catalog'
+  view: 'catalog',
+  favorites: [],
+  orders: [],
+  galleryIndex: 0,
 };
 
 const app = document.getElementById('app');
-const esc = s => String(s ?? '').replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = v => new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 0}).format(v) + ' ₽';
 const saveCart = () => localStorage.setItem('normwear_cart', JSON.stringify(state.cart));
 const cartCount = () => Object.values(state.cart).reduce((a, b) => a + b.qty, 0);
+const nav = () => `<nav>
+  <span onclick="render()" style="color:${state.view==='catalog'?'var(--accent)':''}">⌂<small>Главная</small></span>
+  <span onclick="showFavorites()" style="color:${state.view==='favorites'?'var(--accent)':''}">♡<small>Избранное</small></span>
+  <span onclick="showCart()">🛒<small>Корзина${cartCount()?` (${cartCount()})`:''}</small></span>
+  <span onclick="showProfile()" style="color:${state.view==='profile'?'var(--accent)':''}">◉<small>Профиль</small></span>
+</nav>`;
 
 const SEARCH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`;
 
@@ -30,6 +39,7 @@ function productCard(p) {
 
 function render() {
   state.view = 'catalog';
+  state.galleryIndex = 0;
   const cats = ['Все', ...new Set(state.products.map(p => p.category).filter(Boolean))];
   const filtered = state.products.filter(p =>
     (state.category === 'Все' || p.category === state.category) &&
@@ -48,42 +58,61 @@ function render() {
     </section>
     <div class="chips">${cats.map(c => `<button class="${c === state.category ? 'active' : ''}" onclick="setCategory('${esc(c)}')">${esc(c)}</button>`).join('')}</div>
     <main>${filtered.length ? filtered.map(productCard).join('') : '<div class="empty">Ничего не найдено</div>'}</main>
-    <nav>
-      <span onclick="render()" style="color:var(--accent)">⌂<small>Главная</small></span>
-      <span onclick="showFavorites()">♡<small>Избранное</small></span>
-      <span onclick="showCart()">🛒<small>Корзина${cartCount() ? ` (${cartCount()})` : ''}</small></span>
-      <span onclick="showProfile()">◉<small>Профиль</small></span>
-    </nav>
+    ${nav()}
   </div>`;
 
   document.getElementById('q').oninput = e => { state.query = e.target.value; render(); };
 }
 
-// ── PRODUCT DETAIL ──
+// ── PRODUCT DETAIL WITH GALLERY ──
 
 window.showProduct = id => {
   const p = state.products.find(x => x.id === id);
   if (!p) return;
   state.view = 'detail';
+  state.galleryIndex = 0;
   const sizes = JSON.parse(p.sizes_json || '[]');
+  const media = p.media || [];
 
-  app.innerHTML = `<div class="app detail">
-    <button class="back" onclick="render()">← Назад</button>
-    <div class="gallery"><img src="${p.media?.[0] || ''}" onerror="this.style.display='none'"></div>
-    <div class="info">
-      <h2>${esc(p.title)}</h2>
-      <div class="p">${money(p.price)}</div>
-      ${p.description ? `<div class="desc">${esc(p.description)}</div>` : ''}
-    </div>
-    ${sizes.length ? `<div class="sizes">${sizes.map((s, i) => `<button class="${i === 0 ? 'active' : ''}" onclick="selectSize(this)">${esc(s)}</button>`).join('')}</div>` : ''}
-    <button class="buy" onclick="addToCart(${p.id})" style="padding:14px;font-size:15px">В корзину — ${money(p.price)}</button>
-    <nav>
-      <span onclick="render()">⌂<small>Главная</small></span>
-      <span onclick="showFavorites()">♡<small>Избранное</small></span>
-      <span onclick="showCart()">🛒<small>Корзина${cartCount() ? ` (${cartCount()})` : ''}</small></span>
-      <span onclick="showProfile()">◉<small>Профиль</small></span>
-    </nav>
-  </div>`;
+  function renderDetail() {
+    const img = media[state.galleryIndex] || '';
+    const dots = media.length > 1 ? `<div class="gallery-dots">${media.map((_, i) => `<span class="dot ${i === state.galleryIndex ? 'active' : ''}" onclick="event.stopPropagation();galleryGo(${id},${i})"></span>`).join('')}</div>` : '';
+
+    app.innerHTML = `<div class="app detail">
+      <button class="back" onclick="render()">← Назад</button>
+      <div class="gallery" onclick="galleryNext(${id})">
+        <img src="${img}" onerror="this.style.display='none'">
+        ${dots}
+        ${media.length > 1 ? `<div class="gallery-counter">${state.galleryIndex + 1}/${media.length}</div>` : ''}
+      </div>
+      <div class="info">
+        <h2>${esc(p.title)}</h2>
+        <div class="p">${money(p.price)}</div>
+        ${p.description ? `<div class="desc">${esc(p.description)}</div>` : ''}
+      </div>
+      ${sizes.length ? `<div class="sizes">${sizes.map((s, i) => `<button class="${i === 0 ? 'active' : ''}" onclick="selectSize(this)">${esc(s)}</button>`).join('')}</div>` : ''}
+      <button class="buy" onclick="addToCart(${p.id})" style="padding:14px;font-size:15px">В корзину — ${money(p.price)}</button>
+      ${nav()}
+    </div>`;
+  }
+
+  renderDetail();
+  window._renderDetail = renderDetail;
+  window._detailProduct = p;
+};
+
+window.galleryNext = id => {
+  const p = window._detailProduct;
+  if (!p) return;
+  const media = p.media || [];
+  if (media.length <= 1) return;
+  state.galleryIndex = (state.galleryIndex + 1) % media.length;
+  window._renderDetail();
+};
+
+window.galleryGo = (id, idx) => {
+  state.galleryIndex = idx;
+  window._renderDetail();
 };
 
 window.selectSize = btn => {
@@ -104,7 +133,28 @@ window.addToCart = id => {
   saveCart();
   tg?.HapticFeedback?.impactOccurred('light');
   if (state.view === 'catalog') render();
-  else showProduct(id);
+  else if (state.view === 'detail') window._renderDetail?.();
+};
+
+window.cartInc = id => {
+  if (!state.cart[id]) return;
+  state.cart[id].qty++;
+  saveCart();
+  showCart();
+};
+
+window.cartDec = id => {
+  if (!state.cart[id]) return;
+  state.cart[id].qty--;
+  if (state.cart[id].qty <= 0) delete state.cart[id];
+  saveCart();
+  showCart();
+};
+
+window.cartRemove = id => {
+  delete state.cart[id];
+  saveCart();
+  showCart();
 };
 
 window.setCategory = c => { state.category = c; render(); };
@@ -112,7 +162,7 @@ window.setCategory = c => { state.category = c; render(); };
 window.showCart = () => {
   state.view = 'cart';
   const items = Object.entries(state.cart)
-    .map(([id, x]) => { const p = state.products.find(p => p.id == id); return p ? { ...x, p } : null; })
+    .map(([id, x]) => { const p = state.products.find(p => p.id == id); return p ? { ...x, p, id } : null; })
     .filter(Boolean);
   const total = items.reduce((s, x) => s + x.p.price * x.qty, 0);
   const u = tg?.initDataUnsafe?.user;
@@ -122,7 +172,20 @@ window.showCart = () => {
       <button class="back" onclick="render()">← Назад</button>
       <div class="brand">КОРЗИНА</div>
     </header>
-    <main class="cart">${items.length ? items.map(x => `<div class="cartrow"><b>${esc(x.p.title)}</b><span>${x.qty} × ${money(x.p.price)}</span></div>`).join('') : '<div class="empty">Корзина пуста</div>'}</main>
+    <main class="cart">${items.length ? items.map(x => `<div class="cartrow">
+      <img src="${x.p.media?.[0] || ''}" class="cartrow-img" onerror="this.style.display='none'">
+      <div class="cartrow-info">
+        <b>${esc(x.p.title)}</b>
+        ${x.size ? `<small>Размер: ${esc(x.size)}</small>` : ''}
+        <div class="cartrow-controls">
+          <button class="qty-btn" onclick="cartDec(${x.id})">−</button>
+          <span class="qty-val">${x.qty}</span>
+          <button class="qty-btn" onclick="cartInc(${x.id})">+</button>
+          <button class="qty-btn qty-remove" onclick="cartRemove(${x.id})">✕</button>
+        </div>
+      </div>
+      <div class="cartrow-price">${money(x.p.price * x.qty)}</div>
+    </div>`).join('') : '<div class="empty">Корзина пуста</div>'}</main>
     ${items.length ? `<div class="checkout">
       <div class="total">Итого: <span id="total-display">${money(total)}</span></div>
       <div class="form">
@@ -139,6 +202,7 @@ window.showCart = () => {
       </div>
       <button class="checkoutbtn" onclick="checkout()">Оформить заказ</button>
     </div>` : ''}
+    ${nav()}
   </div>`;
 };
 
@@ -226,44 +290,92 @@ window.checkout = async () => {
   }
 };
 
-// ── FAVORITES (заглушка) ──
+// ── FAVORITES (real API) ──
 
-window.showFavorites = () => {
+window.toggleFav = async (id, e) => {
+  if (e) e.stopPropagation();
+  if (!tg?.initData) return;
+  try {
+    await fetch(`/api/favorites/${id}`, {
+      method: 'POST',
+      headers: { 'X-Telegram-Init-Data': tg.initData }
+    });
+    state.favorites = state.favorites.filter(x => x.id !== id);
+    if (state.view === 'favorites') showFavorites();
+  } catch (e) {}
+};
+
+window.showFavorites = async () => {
+  state.view = 'favorites';
+  state.favorites = [];
+  if (tg?.initData) {
+    try {
+      const r = await fetch('/api/favorites', { headers: { 'X-Telegram-Init-Data': tg.initData } });
+      if (r.ok) state.favorites = await r.json();
+    } catch (e) {}
+  }
+
+  const favSet = new Set(state.favorites.map(f => f.id || f));
+  const favProducts = state.products.filter(p => favSet.has(p.id));
+
   app.innerHTML = `<div class="app">
     <header>
       <button class="back" onclick="render()">← Назад</button>
       <div class="brand">ИЗБРАННОЕ</div>
     </header>
-    <div class="empty">Скоро здесь будут ваши избранные товары</div>
-    <nav>
-      <span onclick="render()">⌂<small>Главная</small></span>
-      <span onclick="showFavorites()" style="color:var(--accent)">♡<small>Избранное</small></span>
-      <span onclick="showCart()">🛒<small>Корзина${cartCount() ? ` (${cartCount()})` : ''}</small></span>
-      <span onclick="showProfile()">◉<small>Профиль</small></span>
-    </nav>
+    <main>${favProducts.length ? favProducts.map(p => `<article class="card" onclick="showProduct(${p.id})">
+      <img loading="lazy" src="${p.media?.[0] || ''}" onerror="this.style.display='none'">
+      <div class="meta">
+        <div class="title">${esc(p.title)}</div>
+        <div class="price">${money(p.price)}</div>
+        <button class="buy" onclick="event.stopPropagation();toggleFav(${p.id})" style="background:var(--bg3);color:var(--text2)">Убрать</button>
+      </div>
+    </article>`).join('') : '<div class="empty">Пока нет избранных товаров</div>'}</main>
+    ${nav()}
   </div>`;
 };
 
-// ── PROFILE (заглушка) ──
+// ── PROFILE WITH ORDER HISTORY ──
 
-window.showProfile = () => {
+window.showProfile = async () => {
+  state.view = 'profile';
   const u = tg?.initDataUnsafe?.user;
+  state.orders = [];
+  if (tg?.initData) {
+    try {
+      const r = await fetch('/api/my-orders', { headers: { 'X-Telegram-Init-Data': tg.initData } });
+      if (r.ok) state.orders = await r.json();
+    } catch (e) {}
+  }
+
+  const statusEmoji = {'awaiting_payment':'💳','awaiting_delivery':'📦','paid':'✅','shipped':'🚚','assembling':'🔧','delivered':'🏁','in_transit':'🛵'};
+  const ordersHtml = state.orders.length ? state.orders.map(o => {
+    const em = statusEmoji[o.status] || '📋';
+    const total = o.total != null ? money(o.total) : '—';
+    return `<div class="orderrow">
+      <div class="orderrow-left">
+        <span class="order-status">${em}</span>
+        <div><b>Заказ #${o.id}</b><small>${o.created_at || ''}</small></div>
+      </div>
+      <div class="orderrow-right">${total}</div>
+    </div>`;
+  }).join('') : '<div class="empty">Нет заказов</div>';
+
   app.innerHTML = `<div class="app">
     <header>
       <button class="back" onclick="render()">← Назад</button>
       <div class="brand">ПРОФИЛЬ</div>
     </header>
-    <div style="text-align:center;padding:40px 0">
+    <div style="text-align:center;padding:24px 0 16px">
       <div style="width:72px;height:72px;border-radius:50%;background:var(--bg3);margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:32px">${u?.first_name?.[0] || '👤'}</div>
       <div style="font-size:18px;font-weight:700;margin-bottom:4px">${esc(u?.first_name || 'Гость')} ${esc(u?.last_name || '')}</div>
       <div style="color:var(--text2);font-size:14px">@${esc(u?.username || '—')}</div>
     </div>
-    <nav>
-      <span onclick="render()">⌂<small>Главная</small></span>
-      <span onclick="showFavorites()">♡<small>Избранное</small></span>
-      <span onclick="showCart()">🛒<small>Корзина${cartCount() ? ` (${cartCount()})` : ''}</small></span>
-      <span onclick="showProfile()" style="color:var(--accent)">◉<small>Профиль</small></span>
-    </nav>
+    <div style="margin-top:16px">
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:12px">Мои заказы</h3>
+      ${ordersHtml}
+    </div>
+    ${nav()}
   </div>`;
 };
 

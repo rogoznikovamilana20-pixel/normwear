@@ -1,6 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, Numeric, Text, ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 class Base(DeclarativeBase):
     pass
@@ -25,8 +28,8 @@ class Product(Base):
     stock: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default='pending', index=True)
     channel_message_id: Mapped[int | None] = mapped_column(BigInteger)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 class MarketSnapshot(Base):
     __tablename__ = 'market_snapshots'
@@ -36,7 +39,7 @@ class MarketSnapshot(Base):
     observed_price: Mapped[float] = mapped_column(Numeric(12, 2))
     title: Mapped[str] = mapped_column(String(255))
     url: Mapped[str | None] = mapped_column(Text)
-    observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Customer(Base):
     __tablename__ = 'customers'
@@ -45,7 +48,7 @@ class Customer(Base):
     username: Mapped[str | None] = mapped_column(String(255))
     name: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(32))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Order(Base):
     __tablename__ = 'orders'
@@ -62,7 +65,7 @@ class Order(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     payment_method: Mapped[str | None] = mapped_column(String(32))
     payment_status: Mapped[str] = mapped_column(String(32), default='unpaid')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class BannedProduct(Base):
     __tablename__ = 'banned_products'
@@ -70,7 +73,7 @@ class BannedProduct(Base):
     sku: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     title_pattern: Mapped[str | None] = mapped_column(String(255), index=True)
     reason: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class PromoCode(Base):
     __tablename__ = 'promo_codes'
@@ -83,14 +86,14 @@ class PromoCode(Base):
     used_count: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Favorite(Base):
     __tablename__ = 'favorites'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey('products.id', ondelete='CASCADE'), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Review(Base):
     __tablename__ = 'reviews'
@@ -101,7 +104,7 @@ class Review(Base):
     rating: Mapped[int] = mapped_column(Integer)
     text: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default='pending')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class OrderItem(Base):
     __tablename__ = 'order_items'
@@ -120,7 +123,7 @@ class SupportTicket(Base):
     admin_chat_id: Mapped[int] = mapped_column(BigInteger)
     admin_message_id: Mapped[int] = mapped_column(Integer)
     user_message_id: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Shipment(Base):
     __tablename__ = 'shipments'
@@ -129,7 +132,7 @@ class Shipment(Base):
     carrier: Mapped[str] = mapped_column(String(32))
     tracking_number: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), default='registered')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class CartReminder(Base):
     __tablename__ = 'cart_reminders'
@@ -137,7 +140,7 @@ class CartReminder(Base):
     user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     product_ids_json: Mapped[str] = mapped_column(Text)
     reminded: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class Referral(Base):
     __tablename__ = 'referrals'
@@ -146,7 +149,7 @@ class Referral(Base):
     referred_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     bonus_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     status: Mapped[str] = mapped_column(String(16), default='pending')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class ReferralConfig(Base):
     __tablename__ = 'referral_config'
@@ -162,15 +165,15 @@ class PickupPoint(Base):
     work_hours: Mapped[str | None] = mapped_column(String(128))
     phone: Mapped[str | None] = mapped_column(String(32))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class ChatSession(Base):
     __tablename__ = 'chat_sessions'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default='open')
-    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class ChatMessage(Base):
     __tablename__ = 'chat_messages'
@@ -181,7 +184,7 @@ class ChatMessage(Base):
     text: Mapped[str | None] = mapped_column(Text)
     file_id: Mapped[str | None] = mapped_column(String(512))
     file_type: Mapped[str | None] = mapped_column(String(16))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 class AdminAudit(Base):
     __tablename__ = 'admin_audit'
@@ -191,4 +194,4 @@ class AdminAudit(Base):
     action: Mapped[str] = mapped_column(String(255))
     target: Mapped[str | None] = mapped_column(String(255))
     details: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

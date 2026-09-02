@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from sqlalchemy import select, func
-from .config import settings
+from .config import settings, get_shop_bot
 from .db import SessionLocal
 from .models import Product, Order, Favorite, PromoCode, Review, Shipment, Referral, ReferralConfig, CartReminder, PickupPoint, ChatSession, ChatMessage
 
@@ -57,12 +57,12 @@ async def start(message: Message):
                         await db.commit()
                         # уведомить реферера
                         from aiogram import Bot
-                        bot = Bot(settings.shop_bot_token)
+                        bot = get_shop_bot()
                         try:
                             await bot.send_message(referrer_id, f'🎉 По твоей ссылке зарегистрировался друг! Бонус {bonus:,.0f} ₽ будет начислен после его первого заказа.')
                         except Exception:
                             pass
-                        await bot.session.close()
+
         except Exception:
             pass
     await message.answer(
@@ -163,7 +163,7 @@ async def on_text(message: Message):
         ])
         for admin_id in settings.admin_ids:
             try:
-                b = Bot(settings.shop_bot_token)
+                b = get_shop_bot()
                 await b.send_message(admin_id, fwd, parse_mode='HTML', reply_markup=kb)
                 await b.session.close()
             except Exception:
@@ -245,7 +245,7 @@ async def on_successful_payment(message: Message):
             )
             # уведомить админов
             from aiogram import Bot as _Bot
-            bot = _Bot(settings.shop_bot_token)
+            bot = _get_shop_bot()
             for admin_id in settings.admin_ids:
                 try:
                     await bot.send_message(
@@ -256,7 +256,6 @@ async def on_successful_payment(message: Message):
                     )
                 except Exception:
                     pass
-            await bot.session.close()
         except Exception as e:
             print(f'payment handler error: {e}', flush=True)
             await message.answer('✅ Оплата получена. Заказ обрабатывается.', reply_markup=main_menu())
@@ -328,7 +327,7 @@ async def show_favorites(call: CallbackQuery):
 @dp.callback_query(F.data == 'referral')
 async def referral_menu(call: CallbackQuery):
     user_id = call.from_user.id
-    bot_username = (await Bot(settings.shop_bot_token).get_me()).username
+    bot_username = (await get_shop_bot().get_me()).username
     link = f'https://t.me/{bot_username}?start=ref{user_id}'
     async with SessionLocal() as db:
         cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
@@ -555,7 +554,7 @@ async def noop(call: CallbackQuery):
     await call.answer()
 
 async def main():
-    bot = Bot(settings.shop_bot_token)
+    bot = get_shop_bot()
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
