@@ -65,22 +65,23 @@ async def _startup_bots():
         from .bot_admin import dp as admin_dp
         from aiogram import Bot
         print("[startup] imports OK", flush=True)
-        async def _run_shop():
-            try:
-                bot = Bot(settings.shop_bot_token)
-                print("[shop_bot] starting polling", flush=True)
-                await shop_dp.start_polling(bot)
-            except Exception as e:
-                import traceback; traceback.print_exc()
-                print(f"[shop_bot] FATAL {e}", flush=True)
-        async def _run_admin():
-            try:
-                bot = Bot(settings.admin_bot_token)
-                print("[admin_bot] starting polling", flush=True)
-                await admin_dp.start_polling(bot)
-            except Exception as e:
-                import traceback; traceback.print_exc()
-                print(f"[admin_bot] FATAL {e}", flush=True)
+
+        async def _run_bot(name: str, token: str, dp):
+            import random
+            backoff = 1
+            while True:
+                try:
+                    bot = Bot(token)
+                    await bot.delete_webhook(drop_pending_updates=True)
+                    print(f"[{name}] starting polling", flush=True)
+                    await dp.start_polling(bot)
+                    print(f"[{name}] polling ended normally", flush=True)
+                except Exception as e:
+                    import traceback; traceback.print_exc()
+                    print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
         async def _run_supplier():
             try:
                 from .supplier_daemon import main as sup_main
@@ -88,12 +89,11 @@ async def _startup_bots():
                 await sup_main()
             except Exception as e:
                 print(f"[supplier] error {e}", flush=True)
-        # only start if tokens look valid
+
         if settings.shop_bot_token and len(settings.shop_bot_token) > 20:
-            asyncio.create_task(_run_shop())
+            asyncio.create_task(_run_bot("shop_bot", settings.shop_bot_token, shop_dp))
         if settings.admin_bot_token and len(settings.admin_bot_token) > 20:
-            asyncio.create_task(_run_admin())
-        # supplier needs mtproto, but webscrape fallback works without
+            asyncio.create_task(_run_bot("admin_bot", settings.admin_bot_token, admin_dp))
         asyncio.create_task(_run_supplier())
         print("[startup] bots+supplier scheduled", flush=True)
     except Exception as e:
