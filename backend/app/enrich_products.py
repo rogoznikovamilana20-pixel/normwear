@@ -58,10 +58,13 @@ async def main():
             continue
         matched += 1
 
-        # Build media_json: list of image URLs
+        # Build media_json: list of image URLs (split by ; if needed)
         media = []
         if ep.get('image_url'):
-            media.append(ep['image_url'])
+            for url in ep['image_url'].split(';'):
+                url = url.strip()
+                if url.startswith('http'):
+                    media.append(url)
 
         # Sizes from Excel variants
         sizes = ep.get('sizes', [])
