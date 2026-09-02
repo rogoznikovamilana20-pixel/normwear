@@ -754,25 +754,33 @@ async def check_low_stock(request: Request):
 @app.post('/api/admin/publish/{product_id}')
 async def publish_to_channel(product_id: int, request: Request):
     _require_admin(request)
-    async with SessionLocal() as db:
-        p = await db.get(Product, product_id)
-        if not p:
-            raise HTTPException(404, 'Product not found')
-        if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
-            p.sale_price = float(p.purchase_price) * (1 + settings.default_margin_pct / 100)
+    try:
+        async with SessionLocal() as db:
+            p = await db.get(Product, product_id)
+            if not p:
+                raise HTTPException(404, 'Product not found')
+            if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+                p.sale_price = float(p.purchase_price) * (1 + settings.default_margin_pct / 100)
+                await db.commit()
+                await db.refresh(p)
+        from .publisher import ChannelPublisher
+        pub = ChannelPublisher()
+        media = json.loads(p.media_json)
+        http_urls = [m for m in media if m.startswith('http')]
+        if not http_urls:
+            raise HTTPException(400, 'No CDN photos')
+        msg_id = await pub.publish(p, http_urls[:6])
+        async with SessionLocal() as db:
+            p.channel_message_id = msg_id
             await db.commit()
-            await db.refresh(p)
-    from .publisher import ChannelPublisher
-    pub = ChannelPublisher()
-    media = json.loads(p.media_json)
-    http_urls = [m for m in media if m.startswith('http')]
-    if not http_urls:
-        raise HTTPException(400, 'No CDN photos')
-    msg_id = await pub.publish(p, http_urls[:6])
-    async with SessionLocal() as db:
-        p.channel_message_id = msg_id
-        await db.commit()
-    return {'message_id': msg_id, 'product_id': product_id, 'price': float(p.sale_price)}
+        return {'message_id': msg_id, 'product_id': product_id, 'price': float(p.sale_price)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f'publish error: {e}', flush=True)
+        raise HTTPException(500, f'Publish error: {str(e)}')
 
 # ── LOYALTY ──
 
