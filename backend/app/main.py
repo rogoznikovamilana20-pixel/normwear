@@ -67,6 +67,7 @@ async def lifespan(app_instance):
                 await bot.delete_webhook(drop_pending_updates=True)
                 wh = f"{webhook_url.rstrip('/')}/webhook/{name}"
                 await bot.set_webhook(wh, drop_pending_updates=True)
+                await bot.session.close()
                 _bot_status[name] = "webhook"
                 print(f"[{name}] webhook set: {wh}", flush=True)
             except Exception as e:
