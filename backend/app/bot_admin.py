@@ -576,11 +576,24 @@ async def change_status(call: CallbackQuery):
     # уведомить клиента
     try:
         bot = get_shop_bot()
-        await bot.send_message(
-            o.telegram_user_id,
-            f'📦 Заказ #{oid}\n\nСтатус изменён: <b>{status_labels.get(new_status, new_status)}</b>',
-            parse_mode='HTML',
+        status_text = status_labels.get(new_status, new_status)
+        detail = {
+            'assembling': 'Мы собираем ваш заказ. Скоро передадим в доставку.',
+            'shipped': 'Ваш заказ передан в службу доставки. Ожидайте трек-номер.',
+            'in_transit': 'Заказ в пути! Скоро будет доставлен.',
+            'delivered': 'Заказ доставлен. Спасибо за покупку! 🎉',
+        }.get(new_status, '')
+        text = (
+            f'📦 <b>Заказ #{oid}</b>\n\n'
+            f'Статус: <b>{status_text}</b>\n'
+            f'{detail}\n\n'
+            f'Сумма: {float(o.subtotal):,.0f} ₽'
         )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='📋 Открыть заказ', callback_data=f'myorder:{oid}')],
+            [InlineKeyboardButton(text='💬 Написать в поддержку', callback_data='support')],
+        ])
+        await bot.send_message(o.telegram_user_id, text, parse_mode='HTML', reply_markup=kb)
 
     except Exception:
         pass
@@ -878,7 +891,6 @@ async def support_reply(message: Message):
         await message.answer('✅ Ответ отправлен клиенту.')
     except Exception as e:
         await message.answer(f'❌ Ошибка: {e}')
-    finally:
 
 
 # ── ЛЮБОЕ ТЕКСТОВОЕ СООБЩЕНИЕ (не в стейте) ──
@@ -1140,7 +1152,7 @@ async def template_use(call: CallbackQuery):
                 if session:
                     msg = ChatMessage(session_id=session.id, sender_id=call.from_user.id, sender_role='admin', text=text)
                     db.add(msg)
-                session.last_message_at = datetime.now(timezone.utc)
+                    session.last_message_at = datetime.now(timezone.utc)
                     await db.commit()
             from aiogram import Bot
             bot = get_shop_bot()

@@ -10,6 +10,7 @@ const state = {
   favorites: [],
   orders: [],
   galleryIndex: 0,
+  reviewsStats: {},
 };
 
 const app = document.getElementById('app');
@@ -78,6 +79,12 @@ window.showProduct = id => {
     const img = media[state.galleryIndex] || '';
     const dots = media.length > 1 ? `<div class="gallery-dots">${media.map((_, i) => `<span class="dot ${i === state.galleryIndex ? 'active' : ''}" onclick="event.stopPropagation();galleryGo(${id},${i})"></span>`).join('')}</div>` : '';
 
+    const reviewsHtml = state.reviewsStats[id]
+      ? `<div style="margin-top:16px;padding:16px;background:var(--bg2);border-radius:12px">
+          <div style="font-size:14px;color:var(--text2)">⭐ ${state.reviewsStats[id].avg_rating} · ${state.reviewsStats[id].count} отзывов</div>
+        </div>`
+      : '';
+
     app.innerHTML = `<div class="app detail">
       <button class="back" onclick="render()">← Назад</button>
       <div class="gallery" onclick="galleryNext(${id})">
@@ -88,6 +95,7 @@ window.showProduct = id => {
       <div class="info">
         <h2>${esc(p.title)}</h2>
         <div class="p">${money(p.price)}</div>
+        ${reviewsHtml}
         ${p.description ? `<div class="desc">${esc(p.description)}</div>` : ''}
       </div>
       ${sizes.length ? `<div class="sizes">${sizes.map((s, i) => `<button class="${i === 0 ? 'active' : ''}" onclick="selectSize(this)">${esc(s)}</button>`).join('')}</div>` : ''}
@@ -99,6 +107,15 @@ window.showProduct = id => {
   renderDetail();
   window._renderDetail = renderDetail;
   window._detailProduct = p;
+
+  // Load reviews stats
+  try {
+    const r = await fetch(`/api/reviews-stats/${id}`);
+    if (r.ok) {
+      state.reviewsStats[id] = await r.json();
+      window._renderDetail();
+    }
+  } catch (e) {}
 };
 
 window.galleryNext = id => {
@@ -352,7 +369,7 @@ window.showProfile = async () => {
   const ordersHtml = state.orders.length ? state.orders.map(o => {
     const em = statusEmoji[o.status] || '📋';
     const total = o.total != null ? money(o.total) : '—';
-    return `<div class="orderrow">
+    return `<div class="orderrow" onclick="showOrderDetail(${o.id})">
       <div class="orderrow-left">
         <span class="order-status">${em}</span>
         <div><b>Заказ #${o.id}</b><small>${o.created_at || ''}</small></div>
@@ -375,6 +392,94 @@ window.showProfile = async () => {
       <h3 style="font-size:16px;font-weight:700;margin-bottom:12px">Мои заказы</h3>
       ${ordersHtml}
     </div>
+    <div style="margin-top:24px;display:flex;flex-direction:column;gap:12px">
+      <button class="buy" onclick="window.open('https://t.me/norm_shop_bot?start=support','_blank')" style="width:100%">💬 Написать в поддержку</button>
+      <button class="buy" onclick="showAbout()" style="width:100%;background:var(--bg3);color:var(--text2)">ℹ️ О магазине</button>
+    </div>
+    ${nav()}
+  </div>`;
+};
+
+// ── ABOUT SHOP PAGE ──
+
+window.showAbout = () => {
+  state.view = 'about';
+  app.innerHTML = `<div class="app">
+    <header>
+      <button class="back" onclick="showProfile()">← Назад</button>
+      <div class="brand">О МАГАЗИНЕ</div>
+    </header>
+    <main style="padding:16px;line-height:1.7">
+      <h2 style="font-size:20px;font-weight:800;margin-bottom:16px">NORMWEAR</h2>
+
+      <h3 style="font-size:16px;font-weight:700;margin:20px 0 8px">🚚 Доставка</h3>
+      <p style="color:var(--text2);font-size:14px">
+        Доставка по Москве: 1-2 дня<br>
+        По России: 3-7 дней<br>
+        Самовывоз: бесплатно
+      </p>
+
+      <h3 style="font-size:16px;font-weight:700;margin:20px 0 8px">💳 Оплата</h3>
+      <p style="color:var(--text2);font-size:14px">
+        Telegram Stars (внутри Telegram)<br>
+        СБП (qr-код)<br>
+        Наложенный платёж
+      </p>
+
+      <h3 style="font-size:16px;font-weight:700;margin:20px 0 8px">🔄 Возврат</h3>
+      <p style="color:var(--text2);font-size:14px">
+        Возврат в течение 14 дней<br>
+        Товар должен быть в оригинальной упаковке<br>
+        Возврат денежных средств в течение 3 дней
+      </p>
+
+      <h3 style="font-size:16px;font-weight:700;margin:20px 0 8px">📞 Контакты</h3>
+      <p style="color:var(--text2);font-size:14px">
+        Telegram: @norm_shop_bot<br>
+        Канал: @normwear_shop
+      </p>
+    </main>
+    ${nav()}
+  </div>`;
+};
+
+// ── ORDER DETAIL ──
+
+window.showOrderDetail = async (orderId) => {
+  state.view = 'order_detail';
+  const order = state.orders.find(o => o.id === orderId);
+  if (!order) { showProfile(); return; }
+
+  const statusEmoji = {'awaiting_payment':'💳','awaiting_delivery':'📦','paid':'✅','shipped':'🚚','assembling':'🔧','delivered':'🏁','in_transit':'🛵'};
+  const statusLabel = {'awaiting_payment':'Ожидает оплаты','awaiting_delivery':'Ожидает доставки','paid':'Оплачен','shipped':'Отправлен','assembling':'Собирается','delivered':'Доставлен','in_transit':'В пути'};
+
+  const itemsHtml = (order.items || []).map(i => `
+    <div class="orderrow">
+      <div class="orderrow-left">
+        <div><b>${esc(i.title || 'Товар')}</b><small>${i.size ? 'Размер: ' + i.size : ''} × ${i.quantity || 1}</small></div>
+      </div>
+      <div class="orderrow-right">${money(i.price || 0)}</div>
+    </div>
+  `).join('');
+
+  app.innerHTML = `<div class="app">
+    <header>
+      <button class="back" onclick="showProfile()">← Назад</button>
+      <div class="brand">ЗАКАЗ #${orderId}</div>
+    </header>
+    <main style="padding:16px">
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:40px">${statusEmoji[order.status] || '📋'}</div>
+        <div style="font-size:18px;font-weight:700;margin-top:8px">${statusLabel[order.status] || order.status}</div>
+      </div>
+      ${itemsHtml}
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--bg3);display:flex;justify-content:space-between;font-weight:700">
+        <span>Итого</span><span>${money(order.total || 0)}</span>
+      </div>
+      <div style="margin-top:24px;display:flex;flex-direction:column;gap:12px">
+        <button class="buy" onclick="window.open('https://t.me/norm_shop_bot?start=support','_blank')" style="width:100%">💬 Написать в поддержку</button>
+      </div>
+    </main>
     ${nav()}
   </div>`;
 };

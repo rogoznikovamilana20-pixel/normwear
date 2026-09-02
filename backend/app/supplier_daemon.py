@@ -30,9 +30,30 @@ async def _check_cart_reminders():
                     pass
         await db.commit()
 
+async def _sync_stock_levels():
+    """Sync stock levels: if supplier has no post, mark out of stock."""
+    from .db import SessionLocal
+    from .models import Product
+    from sqlalchemy import select, update
+    try:
+        async with SessionLocal() as db:
+            # Mark products with 0 supplier message as potentially out of stock
+            # This is a simple heuristic — in reality you'd parse supplier catalog
+            result = await db.execute(
+                update(Product)
+                .where(Product.supplier_message_id == 0, Product.status == 'published')
+                .values(status='draft')
+            )
+            if result.rowcount > 0:
+                await db.commit()
+                print(f'Stock sync: {result.rowcount} products marked draft (no supplier data)', flush=True)
+    except Exception as exc:
+        print(f'Stock sync error: {exc!r}', flush=True)
+
 async def main():
     first = True
     reminder_tick = 0
+    stock_tick = 0
     while True:
         try:
             result = await ingest_supplier(days=7 if first else 1)
@@ -47,6 +68,13 @@ async def main():
                 await _check_cart_reminders()
             except Exception as exc:
                 print(f"cart reminder error: {exc!r}", flush=True)
+        stock_tick += 1
+        if stock_tick >= 30:
+            stock_tick = 0
+            try:
+                await _sync_stock_levels()
+            except Exception as exc:
+                print(f"stock sync error: {exc!r}", flush=True)
         await asyncio.sleep(60)
 
 if __name__ == '__main__': asyncio.run(main())

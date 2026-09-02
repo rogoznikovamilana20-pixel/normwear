@@ -1,6 +1,7 @@
 import json
 import hashlib
 import hmac
+import time as _time
 from decimal import Decimal
 from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -148,6 +149,24 @@ async def health(): return {'status': 'ok'}
 @app.get('/bot-status')
 async def bot_status(): return _bot_status
 
+# ── WEBHOOK SUPPORT (optional, use WEBHOOK_URL env var) ──
+
+from aiogram.types import Update as AiogramUpdate
+
+@app.post('/webhook/shop')
+async def webhook_shop(request: Request):
+    body = await request.json()
+    update = AiogramUpdate.model_validate(body)
+    await shop_dp.feed_update(get_shop_bot(), update)
+    return {"ok": True}
+
+@app.post('/webhook/admin')
+async def webhook_admin(request: Request):
+    body = await request.json()
+    update = AiogramUpdate.model_validate(body)
+    await admin_dp.feed_update(get_admin_bot(), update)
+    return {"ok": True}
+
 @app.get('/metrics')
 async def metrics():
     # simple prometheus-style metrics without extra deps
@@ -265,6 +284,12 @@ async def create_product(request: Request):
             db.add(p)
             await db.commit()
             await db.refresh(p)
+            if settings.auto_publish and p.status == 'draft':
+                try:
+                    from .publisher import publish_product
+                    await publish_product(p.id)
+                except Exception as e:
+                    print(f'Auto-publish error: {e}', flush=True)
             return {'id': p.id, 'title': p.title}
     except HTTPException:
         raise
@@ -373,6 +398,55 @@ async def bulk_update(request: Request):
         raise
     except Exception as e:
         return JSONResponse(status_code=500, content={'detail': str(e)})
+
+# ── CATALOG CACHE (60s TTL) ──
+
+_catalog_cache: dict = {"data": None, "ts": 0}
+CATALOG_CACHE_TTL = 60
+
+@app.get('/api/catalog')
+async def catalog_cached():
+    now = _time.time()
+    if _catalog_cache["data"] and now - _catalog_cache["ts"] < CATALOG_CACHE_TTL:
+        return JSONResponse(content=_catalog_cache["data"])
+    async with SessionLocal() as db:
+        rows = (await db.scalars(
+            select(Product).where(Product.status == 'published', Product.stock > 0)
+            .order_by(Product.created_at.desc()).limit(100)
+        )).all()
+    def _media_urls(p):
+        raw = json.loads(p.media_json)
+        return [item if item.startswith('http') else f'/media/{p.id}/{i}' for i, item in enumerate(raw)]
+    data = [{'id': p.id, 'title': p.title, 'description': p.description or '', 'category': p.category,
+             'price': float(p.sale_price), 'stock': p.stock, 'sizes': json.loads(p.sizes_json),
+             'media': _media_urls(p)} for p in rows]
+    _catalog_cache["data"] = data
+    _catalog_cache["ts"] = now
+    return JSONResponse(content=data)
+
+# ── REVIEWS API ──
+
+@app.get('/api/reviews/{product_id}')
+async def product_reviews(product_id: int):
+    from .models import Review
+    async with SessionLocal() as db:
+        reviews = (await db.scalars(
+            select(Review).where(Review.product_id == product_id, Review.status == 'approved')
+            .order_by(Review.id.desc()).limit(20)
+        )).all()
+    return [{'id': r.id, 'rating': r.rating, 'text': r.text or '', 'user': r.user_telegram_id} for r in reviews]
+
+@app.get('/api/reviews-stats/{product_id}')
+async def review_stats(product_id: int):
+    from .models import Review
+    from sqlalchemy import func
+    async with SessionLocal() as db:
+        result = (await db.execute(
+            select(func.count(Review.id), func.coalesce(func.avg(Review.rating), 0))
+            .where(Review.product_id == product_id, Review.status == 'approved')
+        )).one()
+    count, avg_rating = result[0], float(result[1])
+    return {'count': count, 'avg_rating': round(avg_rating, 1)}
 
 @app.get('/api/favorites')
 async def get_favorites(request: Request, x_telegram_init_data: str = Header(default='')):
@@ -540,10 +614,6 @@ async def create_order(request: Request, checkout: Checkout, x_telegram_init_dat
                             await bot.send_message(aid, text)
                         except Exception:
                             pass
-                    try:
-
-                    except Exception:
-                        pass
                 try:
                     asyncio.create_task(_notify())
                 except RuntimeError:

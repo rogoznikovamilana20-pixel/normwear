@@ -639,6 +639,15 @@ nav small {
   color: var(--accent);
 }
 
+.orderrow {
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.orderrow:active {
+  background: var(--bg3);
+}
+
 /* ── SCROLLBAR ── */
 
 ::-webkit-scrollbar { width: 0; height: 0; }
