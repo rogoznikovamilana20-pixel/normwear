@@ -749,6 +749,48 @@ async def check_low_stock(request: Request):
         )).all()
     return [{'id': p.id, 'title': p.title, 'stock': p.stock} for p in low]
 
+# ── PUBLISH PRODUCT TO CHANNEL ──
+
+@app.post('/api/admin/publish/{product_id}')
+async def publish_to_channel(product_id: int, request: Request):
+    _require_admin(request)
+    async with SessionLocal() as db:
+        p = await db.get(Product, product_id)
+        if not p:
+            raise HTTPException(404, 'Product not found')
+    from .publisher import ChannelPublisher
+    pub = ChannelPublisher()
+    media = json.loads(p.media_json)
+    http_urls = [m for m in media if m.startswith('http')]
+    if not http_urls:
+        raise HTTPException(400, 'No CDN photos')
+    import tempfile, httpx
+    tmp_files = []
+    async with httpx.AsyncClient() as client:
+        for url in http_urls[:6]:
+            try:
+                resp = await client.get(url, timeout=30)
+                if resp.status_code == 200:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                    tmp.write(resp.content)
+                    tmp.close()
+                    tmp_files.append(tmp.name)
+            except Exception:
+                pass
+    if not tmp_files:
+        raise HTTPException(500, 'Failed to download photos')
+    try:
+        msg_id = await pub.publish(p, tmp_files)
+    finally:
+        import os
+        for f in tmp_files:
+            try: os.unlink(f)
+            except: pass
+    async with SessionLocal() as db:
+        p.channel_message_id = msg_id
+        await db.commit()
+    return {'message_id': msg_id, 'product_id': product_id}
+
 # ── LOYALTY ──
 
 @app.get('/api/loyalty')
