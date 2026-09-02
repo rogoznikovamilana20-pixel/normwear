@@ -758,6 +758,11 @@ async def publish_to_channel(product_id: int, request: Request):
         p = await db.get(Product, product_id)
         if not p:
             raise HTTPException(404, 'Product not found')
+        # apply 35% markup if sale_price equals purchase_price
+        if float(p.purchase_price) > 0 and float(p.sale_price) <= float(p.purchase_price):
+            p.sale_price = float(p.purchase_price) * (1 + settings.default_margin_pct / 100)
+            await db.commit()
+            await db.refresh(p)
     from .publisher import ChannelPublisher
     pub = ChannelPublisher()
     media = json.loads(p.media_json)
@@ -789,7 +794,7 @@ async def publish_to_channel(product_id: int, request: Request):
     async with SessionLocal() as db:
         p.channel_message_id = msg_id
         await db.commit()
-    return {'message_id': msg_id, 'product_id': product_id}
+    return {'message_id': msg_id, 'product_id': product_id, 'price': float(p.sale_price)}
 
 # ── LOYALTY ──
 
