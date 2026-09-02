@@ -294,6 +294,49 @@ async def bulk_publish(request: Request):
         await db.commit()
     return {'published': count}
 
+@app.post('/api/products/bulk-update')
+async def bulk_update(request: Request):
+    from .models import Product
+    import re as _re
+    try:
+        body = await request.json()
+        updates = body.get('updates', [])
+        if not updates or len(updates) > 200:
+            raise HTTPException(400, 'updates array required, max 200')
+        updated = 0
+        not_found = 0
+        async with SessionLocal() as db:
+            for u in updates:
+                title = str(u.get('title', '')).strip()[:200]
+                if not title:
+                    not_found += 1
+                    continue
+                p = await db.scalar(select(Product).where(Product.title == title))
+                if not p:
+                    not_found += 1
+                    continue
+                if u.get('media_json') is not None:
+                    p.media_json = json.dumps(u['media_json'])
+                if u.get('sizes_json') is not None:
+                    p.sizes_json = json.dumps(u['sizes_json'])
+                if u.get('description') is not None:
+                    p.description = str(u['description'])[:500]
+                if u.get('category') is not None:
+                    p.category = str(u['category'])[:128]
+                if u.get('purchase_price') is not None:
+                    p.purchase_price = float(u['purchase_price'])
+                if u.get('sale_price') is not None:
+                    p.sale_price = float(u['sale_price'])
+                if u.get('brand') is not None:
+                    p.brand = str(u['brand'])[:128]
+                updated += 1
+            await db.commit()
+        return {'updated': updated, 'not_found': not_found}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={'detail': str(e)})
+
 @app.post('/api/session/validate')
 @limiter.limit("30/minute")
 async def validate(request: Request, x_telegram_init_data: str = Header(default='')):
