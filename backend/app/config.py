@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     sbp_payment_url: str = ''
     admin_telegram_ids: str = ''
     auto_publish: bool = False
+    webhook_url: str = ''
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
     @property

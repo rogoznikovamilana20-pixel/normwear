@@ -56,24 +56,40 @@ async def lifespan(app_instance):
     from aiogram import Bot
     print("[lifespan] imports OK", flush=True)
 
+    webhook_url = getattr(settings, 'webhook_url', '') or ''
+
     async def _run_bot(name: str, token: str, dp):
         _bot_status[name] = "starting"
-        backoff = 1
-        while True:
+        if webhook_url:
+            # WEBHOOK MODE
             try:
                 bot = Bot(token)
                 await bot.delete_webhook(drop_pending_updates=True)
-                _bot_status[name] = "polling"
-                print(f"[{name}] starting polling", flush=True)
-                await dp.start_polling(bot)
-                _bot_status[name] = "stopped"
-                print(f"[{name}] polling ended normally", flush=True)
+                wh = f"{webhook_url.rstrip('/')}/webhook/{name}"
+                await bot.set_webhook(wh, drop_pending_updates=True)
+                _bot_status[name] = "webhook"
+                print(f"[{name}] webhook set: {wh}", flush=True)
             except Exception as e:
-                import traceback; traceback.print_exc()
-                _bot_status[name] = f"crashed: {e}"
-                print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+                print(f"[{name}] webhook error: {e}", flush=True)
+                _bot_status[name] = f"webhook_error: {e}"
+        else:
+            # POLLING MODE
+            backoff = 1
+            while True:
+                try:
+                    bot = Bot(token)
+                    await bot.delete_webhook(drop_pending_updates=True)
+                    _bot_status[name] = "polling"
+                    print(f"[{name}] starting polling", flush=True)
+                    await dp.start_polling(bot)
+                    _bot_status[name] = "stopped"
+                    print(f"[{name}] polling ended normally", flush=True)
+                except Exception as e:
+                    import traceback; traceback.print_exc()
+                    _bot_status[name] = f"crashed: {e}"
+                    print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
 
     async def _run_supplier():
         try:
