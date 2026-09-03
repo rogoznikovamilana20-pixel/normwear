@@ -57,7 +57,6 @@ class SupplierWorker:
         return result
 
     async def _collect_webscrape(self, days: int) -> list[SupplierPost]:
-        # fallback without API keys: scrape https://t.me/s/optobaza
         import httpx
         from bs4 import BeautifulSoup
         url = f"https://t.me/s/{settings.supplier_channel_username}"
@@ -70,42 +69,17 @@ class SupplierWorker:
                 for idx, wrap in enumerate(soup.select(".tgme_widget_message_wrap")):
                     text_el = wrap.select_one(".tgme_widget_message_text")
                     text = text_el.get_text("\n", strip=True) if text_el else ""
-                    # try extract date
-                    time_el = wrap.select_one("time")
-                    # keep all recent, filter by parse_product later; keep last 30
                     media_items: list[MediaItem] = []
                     for a in wrap.select("a.tgme_widget_message_photo_wrap"):
                         style = a.get("style","")
                         m = re.search(r"url\('([^']+)'\)", style)
                         if m:
                             img_url = m.group(1)
-                            try:
-                                img_path = MEDIA_DIR / f"scrape_{idx}_{len(media_items)}.jpg"
-                                async with httpx.AsyncClient(timeout=20) as cc:
-                                    img = await cc.get(img_url)
-                                    if img.status_code==200:
-                                        img_path.write_bytes(img.content)
-                                        media_items.append(MediaItem(idx, str(img_path), "image/jpeg"))
-                            except Exception:
-                                pass
-                    # also inline photos
-                    for img in wrap.select("img"):
-                        src = img.get("src")
-                        if src and "telegram" not in src:
-                            try:
-                                img_path = MEDIA_DIR / f"scrape_{idx}_{len(media_items)}.jpg"
-                                async with httpx.AsyncClient(timeout=20) as cc:
-                                    im = await cc.get(src)
-                                    if im.status_code==200:
-                                        img_path.write_bytes(im.content)
-                                        media_items.append(MediaItem(idx, str(img_path), "image/jpeg"))
-                            except Exception:
-                                pass
+                            media_items.append(MediaItem(idx, img_url, "image/jpeg"))
                     posts.append(SupplierPost(idx, None, text, media_items))
-                # return last 30, caller filters by days/parse
                 return posts[-30:]
         except Exception as e:
-            print(f"webscrape fallback error: {e}")
+            print(f"[supplier] webscrape error: {e}", flush=True)
             return []
 
     async def collect_recent_posts(self, days: int = 14) -> list[SupplierPost]:
