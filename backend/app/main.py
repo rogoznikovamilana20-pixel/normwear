@@ -926,21 +926,19 @@ async def ingestion_stats(request: Request):
             'jobs': {'pending': jobs_pending, 'retry': jobs_retry, 'failed': jobs_failed}}
 
 @app.post('/api/admin/trigger-sync')
-async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
+async def trigger_sync(request: Request):
     _require_admin(request)
     body = await request.json() if request.headers.get('content-type') == 'application/json' else {}
     days = body.get('days', 7)
-    async def _run():
+    try:
         from .pipeline import ingest_supplier
-        try:
-            result = await ingest_supplier(days=days)
-            print(f'[trigger-sync] {result}', flush=True)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f'[trigger-sync] ERROR: {e}', flush=True)
-    background_tasks.add_task(_run)
-    return {'status': 'started', 'days': days}
+        result = await ingest_supplier(days=days)
+        print(f'[trigger-sync] {result}', flush=True)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'error': str(e)[:500]}
 
 @app.get('/api/admin/diagnose-supplier')
 async def diagnose_supplier(request: Request):
