@@ -5,3 +5,8 @@ backend/media/*
 !backend/media/.gitkeep
 node_modules/
 dist/
+_*.py
+_*.png
+_*.json
+moysklad_*.json
+media/supplier/
