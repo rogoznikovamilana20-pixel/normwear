@@ -50,8 +50,8 @@ class SupplierWorker:
                     if saved:
                         mime = getattr(getattr(msg, 'file', None), 'mime_type', None)
                         target.media.append(MediaItem(msg.id, str(saved), mime))
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f'[supplier] download error msg {msg.id}: {e}', flush=True)
         result = singles + list(groups.values())
         result.sort(key=lambda x: x.message_id)
         return result
