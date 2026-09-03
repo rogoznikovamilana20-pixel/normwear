@@ -200,8 +200,9 @@ async def webhook_shop(request: Request):
         update = AiogramUpdate.model_validate(body)
         await shop_dp.feed_update(get_shop_bot(), update)
     except Exception as e:
-        print(f"[webhook/shop] error: {e}", flush=True)
-        import traceback; traceback.print_exc()
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[webhook/shop] error: {e}\n{tb}", flush=True)
     return {"ok": True}
 
 @app.post('/webhook/admin')
@@ -211,9 +212,56 @@ async def webhook_admin(request: Request):
         update = AiogramUpdate.model_validate(body)
         await admin_dp.feed_update(get_admin_bot(), update)
     except Exception as e:
-        print(f"[webhook/admin] error: {e}", flush=True)
-        import traceback; traceback.print_exc()
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[webhook/admin] error: {e}\n{tb}", flush=True)
     return {"ok": True}
+
+@app.get('/api/admin/test-webhook')
+async def test_webhook_admin(request: Request):
+    _require_admin(request)
+    import traceback
+    results = {}
+    try:
+        from .bot_admin import dp as admin_dp, allowed
+        results['admin_dp_import'] = 'ok'
+    except Exception as e:
+        results['admin_dp_import'] = str(e)
+    try:
+        from .bot_shop import dp as shop_dp
+        results['shop_dp_import'] = 'ok'
+    except Exception as e:
+        results['shop_dp_import'] = str(e)
+    try:
+        bot = get_admin_bot()
+        me = await bot.get_me()
+        results['admin_bot'] = me.username
+    except Exception as e:
+        results['admin_bot'] = str(e)
+    try:
+        shop_bot = get_shop_bot()
+        me = await shop_bot.get_me()
+        results['shop_bot'] = me.username
+    except Exception as e:
+        results['shop_bot'] = str(e)
+    # simulate /start update
+    try:
+        fake_update = AiogramUpdate.model_validate({
+            "update_id": 123456789,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 1977604257, "is_bot": False, "first_name": "Test"},
+                "chat": {"id": 1977604257, "type": "private"},
+                "date": 1788425000,
+                "text": "/start"
+            }
+        })
+        await admin_dp.feed_update(get_admin_bot(), fake_update)
+        results['feed_update'] = 'ok - check if message was sent'
+    except Exception as e:
+        results['feed_update_error'] = str(e)
+        results['feed_update_traceback'] = traceback.format_exc()[-500:]
+    return results
 
 @app.get('/metrics')
 async def metrics():
