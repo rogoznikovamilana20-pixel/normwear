@@ -30,6 +30,7 @@ async def audit(admin_id: int, action: str, target: str = '', details: str = '')
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='📝 Модерация', callback_data='menu:moderation')],
+        [InlineKeyboardButton(text='📸 Фото из Яндекс Диска', callback_data='menu:photos')],
         [InlineKeyboardButton(text='📦 Товары', callback_data='menu:products'),
          InlineKeyboardButton(text='📋 Заказы', callback_data='menu:orders')],
         [InlineKeyboardButton(text='📊 Статистика', callback_data='menu:stats'),
@@ -396,6 +397,157 @@ async def moderation_text_input(message: Message):
     _MOD_STATE[message.from_user.id]['pending_edit'] = pending
     _MOD_STATE[message.from_user.id]['editing'] = None
     await message.answer(f'✅ Записано. Нажми "Сохранить" чтобы применить.', reply_markup=_edit_kb(pid))
+
+# ── ФОТО ИЗ ЯНДЕКС ДИСКА ──
+
+_PHOTO_STATE: dict[int, dict] = {}
+_yandex_index: dict | None = None
+
+def _load_yandex_index():
+    global _yandex_index
+    if _yandex_index is None:
+        try:
+            import os
+            candidates = ['_yandex_index.json', '/app/_yandex_index.json']
+            for path in candidates:
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        _yandex_index = json.load(f)
+                    break
+        except Exception:
+            _yandex_index = {}
+    return _yandex_index
+
+def _extract_brand(title: str) -> str | None:
+    title_lower = title.lower()
+    brand_map = {
+        'y-3': ['y-3', 'y3', 'yohji yamamoto'],
+        'nike': ['nike', 'acg'],
+        'corteiz': ['corteiz', 'cor-teiz'],
+        'supreme': ['supreme'],
+        'undercover': ['undercover'],
+        'vetements': ['vetements'],
+        'bape': ['bape', 'a bathing ape'],
+        'cdg': ['cdg', 'comme des garcons'],
+        'chrome hearts': ['chrome heart'],
+        'balenciaga': ['balenciaga'],
+        'gucci': ['gucci'],
+        'valentino': ['valentino'],
+        'palace': ['palace'],
+        'stussy': ['stussy'],
+        'maison margiela': ['margiela'],
+        'acne studios': ['acne'],
+        'essentials': ['essentials', 'fear of essentials'],
+        'off-white': ['off-white', 'off white'],
+        'denim tears': ['denim tears'],
+        'erd': ['erd', 'enfants riches'],
+        'marcelo burlon': ['marcelo burlon'],
+        'mastermind': ['mastermind'],
+        'polo ralph lauren': ['polo ralph', 'ralph lauren'],
+        'ami paris': ['ami paris'],
+        'alyx': ['alyx'],
+        'neighborhood': ['neighborhood'],
+        'philip plein': ['philip plein'],
+        'acme de la vie': ['acme de la vie'],
+        'fred perry': ['fred perry'],
+        'burberry': ['burberry'],
+        'polar': ['polar'],
+        'wexwear': ['wexwear'],
+        'kenzo': ['kenzo'],
+        'palm angels': ['palm angels'],
+        'stone island': ['stone island'],
+        'thom browne': ['thom browne'],
+        'moncler': ['moncler'],
+        'dior': ['dior'],
+        'prada': ['prada'],
+        'fendi': ['fendi'],
+        'versace': ['versace'],
+        'comme des fuckdown': ['comme des fuckdown'],
+        'cdf': ['cdf'],
+    }
+    for brand, aliases in brand_map.items():
+        for alias in aliases:
+            if alias in title_lower:
+                return brand
+    return None
+
+def _get_brand_photos(brand: str, category: str = None) -> list[dict]:
+    idx = _load_yandex_index()
+    if not idx:
+        return []
+    photos = []
+    for cat_key, cat_brands in idx.get('categories', {}).items():
+        if brand in cat_brands:
+            photos.extend(cat_brands[brand]['photos'])
+    return photos
+
+async def _show_photo_review(call: CallbackQuery, page: int = 0):
+    async with SessionLocal() as db:
+        products = (await db.scalars(
+            select(Product).where(Product.media_json.is_(None) | (Product.media_json == '[]'))
+            .order_by(Product.id.desc())
+        )).all()
+    if not products:
+        await call.message.edit_text('✅ Все товары имеют фото!', reply_markup=back_menu())
+        return
+    p = products[page]
+    brand = _extract_brand(p.title)
+    photos = _get_brand_photos(brand) if brand else []
+    text = (
+        f'📸 <b>Фото #{p.id}</b> ({page+1}/{len(products)})\n\n'
+        f'<b>{p.title[:60]}</b>\n'
+        f'🏷 Бренд: {brand or "❓ неизвестен"}\n'
+        f'📸 Фото на диске: {len(photos)}\n'
+        f'📦 Текущие фото: нет\n'
+    )
+    _PHOTO_STATE[call.from_user.id] = {'products': products, 'page': page}
+    kb_rows = []
+    if photos:
+        kb_rows.append([InlineKeyboardButton(text=f'📸 Применить все ({len(photos[:5])})', callback_data=f'photo:apply:{p.id}')])
+        kb_rows.append([InlineKeyboardButton(text='⏭ Пропустить', callback_data=f'photo:skip:{p.id}')])
+    else:
+        kb_rows.append([InlineKeyboardButton(text='⏭ Нет фото — пропустить', callback_data=f'photo:skip:{p.id}')])
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')])
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'menu:photos')
+async def menu_photos(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    await _show_photo_review(call, 0)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('photo:apply:'))
+async def photo_apply(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(Product, pid)
+        if not p:
+            await call.answer('Товар не найден', show_alert=True)
+            return
+        brand = _extract_brand(p.title)
+        photos = _get_brand_photos(brand)
+        if not photos:
+            await call.answer('Нет фото', show_alert=True)
+            return
+        urls = [ph['url'] for ph in photos[:5] if ph.get('url')]
+        p.media_json = json.dumps(urls, ensure_ascii=False)
+        await db.commit()
+    await call.answer('✅ Фото применены', show_alert=True)
+    state = _PHOTO_STATE.get(call.from_user.id, {})
+    page = state.get('page', 0)
+    await _show_photo_review(call, page)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('photo:skip:'))
+async def photo_skip(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    state = _PHOTO_STATE.get(call.from_user.id, {})
+    page = state.get('page', 0)
+    products = state.get('products', [])
+    if page < len(products) - 1:
+        await _show_photo_review(call, page + 1)
+    else:
+        await call.message.edit_text('✅ Все товары обработаны!', reply_markup=back_menu())
 
 # ── ПРОДУКТЫ ──
 
