@@ -971,6 +971,38 @@ async def diagnose_supplier(request: Request):
         results['errors'].append(f'web: {str(e)[:300]}')
     return results
 
+@app.get('/api/admin/test-pipeline')
+async def test_pipeline(request: Request, days: int = 1):
+    _require_admin(request)
+    try:
+        from .supplier import SupplierWorker
+        from .parser import parse_product
+        from .services import select_product_media
+        worker = SupplierWorker()
+        posts = await worker.collect_recent_posts(days)
+        parsed_count = 0
+        skipped_count = 0
+        details = []
+        for post in posts[:10]:
+            parsed = parse_product(post.text)
+            media = select_product_media(post)
+            details.append({
+                'msg_id': post.message_id,
+                'text_len': len(post.text),
+                'media_count': len(media),
+                'parsed': parsed is not None,
+                'text_preview': post.text[:100] if post.text else '(empty)',
+            })
+            if parsed:
+                parsed_count += 1
+            else:
+                skipped_count += 1
+        return {'total_posts': len(posts), 'parsed': parsed_count, 'skipped': skipped_count, 'details': details}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'error': str(e)[:500]}
+
 # ── LOYALTY ──
 
 @app.get('/api/loyalty')
