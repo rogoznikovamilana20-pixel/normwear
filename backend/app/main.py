@@ -820,6 +820,35 @@ async def apply_markup(request: Request):
         await db.commit()
     return {'updated': updated, 'total': len(rows), 'pct': pct}
 
+@app.post('/api/admin/batch-update-media')
+async def batch_update_media(request: Request):
+    _require_admin(request)
+    body = await request.json()
+    updates = body.get('updates', [])
+    if not updates:
+        return {'error': 'no updates provided'}
+    updated = 0
+    skipped = 0
+    errors = []
+    async with SessionLocal() as db:
+        for item in updates:
+            pid = item.get('id')
+            media = item.get('media', [])
+            if not pid or not media:
+                skipped += 1
+                continue
+            try:
+                p = await db.get(Product, int(pid))
+                if not p:
+                    skipped += 1
+                    continue
+                p.media_json = json.dumps(media, ensure_ascii=False)
+                updated += 1
+            except Exception as e:
+                errors.append(f"#{pid}: {str(e)[:100]}")
+        await db.commit()
+    return {'updated': updated, 'skipped': skipped, 'errors': errors}
+
 # ── DELETE CHANNEL POST ──
 
 @app.delete('/api/admin/channel-message/{message_id}')
