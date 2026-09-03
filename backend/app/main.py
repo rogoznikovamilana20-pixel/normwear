@@ -53,6 +53,7 @@ import os as _os, asyncio
 from contextlib import asynccontextmanager
 
 _bot_status = {"shop": "not_started", "admin": "not_started"}
+_webhook_errors: list[dict] = []
 
 @asynccontextmanager
 async def lifespan(app_instance):
@@ -203,6 +204,9 @@ async def webhook_shop(request: Request):
         import traceback
         tb = traceback.format_exc()
         print(f"[webhook/shop] error: {e}\n{tb}", flush=True)
+        _webhook_errors.append({"bot": "shop", "error": str(e)[:300], "traceback": tb[-500:], "ts": time.time()})
+        if len(_webhook_errors) > 50:
+            _webhook_errors.pop(0)
     return {"ok": True}
 
 @app.post('/webhook/admin')
@@ -215,6 +219,9 @@ async def webhook_admin(request: Request):
         import traceback
         tb = traceback.format_exc()
         print(f"[webhook/admin] error: {e}\n{tb}", flush=True)
+        _webhook_errors.append({"bot": "admin", "error": str(e)[:300], "traceback": tb[-500:], "ts": time.time()})
+        if len(_webhook_errors) > 50:
+            _webhook_errors.pop(0)
     return {"ok": True}
 
 @app.get('/api/admin/test-webhook')
@@ -1030,6 +1037,11 @@ async def diagnose_supplier(request: Request):
     except Exception as e:
         results['errors'].append(f'web: {str(e)[:300]}')
     return results
+
+@app.get('/api/admin/webhook-errors')
+async def get_webhook_errors(request: Request):
+    _require_admin(request)
+    return {"errors": _webhook_errors[-20:]}
 
 @app.get('/api/admin/test-pipeline')
 async def test_pipeline(request: Request, days: int = 1):
