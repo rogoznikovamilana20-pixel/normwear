@@ -195,16 +195,24 @@ from aiogram.types import Update as AiogramUpdate
 
 @app.post('/webhook/shop')
 async def webhook_shop(request: Request):
-    body = await request.json()
-    update = AiogramUpdate.model_validate(body)
-    await shop_dp.feed_update(get_shop_bot(), update)
+    try:
+        body = await request.json()
+        update = AiogramUpdate.model_validate(body)
+        await shop_dp.feed_update(get_shop_bot(), update)
+    except Exception as e:
+        print(f"[webhook/shop] error: {e}", flush=True)
+        import traceback; traceback.print_exc()
     return {"ok": True}
 
 @app.post('/webhook/admin')
 async def webhook_admin(request: Request):
-    body = await request.json()
-    update = AiogramUpdate.model_validate(body)
-    await admin_dp.feed_update(get_admin_bot(), update)
+    try:
+        body = await request.json()
+        update = AiogramUpdate.model_validate(body)
+        await admin_dp.feed_update(get_admin_bot(), update)
+    except Exception as e:
+        print(f"[webhook/admin] error: {e}", flush=True)
+        import traceback; traceback.print_exc()
     return {"ok": True}
 
 @app.get('/metrics')
