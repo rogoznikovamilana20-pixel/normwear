@@ -3,7 +3,7 @@ from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, Numeric, 
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def _utcnow():
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Base(DeclarativeBase):
     pass
