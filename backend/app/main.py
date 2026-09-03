@@ -932,10 +932,44 @@ async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
     days = body.get('days', 7)
     async def _run():
         from .pipeline import ingest_supplier
-        result = await ingest_supplier(days=days)
-        print(f'[trigger-sync] {result}', flush=True)
+        try:
+            result = await ingest_supplier(days=days)
+            print(f'[trigger-sync] {result}', flush=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f'[trigger-sync] ERROR: {e}', flush=True)
     background_tasks.add_task(_run)
     return {'status': 'started', 'days': days}
+
+@app.get('/api/admin/diagnose-supplier')
+async def diagnose_supplier(request: Request):
+    _require_admin(request)
+    from .config import settings
+    results = {'mtproto': False, 'web_scrape': False, 'errors': []}
+    if settings.telegram_api_id and settings.telegram_api_hash and settings.supplier_session_string:
+        try:
+            from telethon import TelegramClient
+            from telethon.sessions import StringSession
+            client = TelegramClient(StringSession(settings.supplier_session_string), settings.telegram_api_id, settings.telegram_api_hash)
+            await client.start()
+            count = 0
+            async for msg in client.iter_messages(settings.supplier_channel_username, limit=3):
+                count += 1
+            await client.disconnect()
+            results['mtproto'] = True
+            results['mtproto_posts'] = count
+        except Exception as e:
+            results['errors'].append(f'mtproto: {str(e)[:300]}')
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(f"https://t.me/s/{settings.supplier_channel_username}", headers={"User-Agent":"Mozilla/5.0"})
+            results['web_scrape'] = r.status_code == 200
+            results['web_scrape_posts'] = r.text.count('tgme_widget_message_wrap')
+    except Exception as e:
+        results['errors'].append(f'web: {str(e)[:300]}')
+    return results
 
 # ── LOYALTY ──
 
