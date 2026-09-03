@@ -138,7 +138,7 @@ async def ingest_supplier(days: int = 14) -> dict:
                     sale_price=sale_price,
                     price_confidence=0.8,
                     stock=parsed.stock,
-                    status='published' if settings.auto_publish else 'pending',
+                    status='pending',
                 )
                 db.add(product)
                 await db.flush()
@@ -163,19 +163,6 @@ async def ingest_supplier(days: int = 14) -> dict:
                 )
                 db.add(job)
                 created += 1
-
-                if settings.auto_publish and product.status == 'published':
-                    try:
-                        from .publisher import ChannelPublisher
-                        pub = ChannelPublisher()
-                        all_media = json.loads(product.media_json)
-                        http_urls = [m for m in all_media if m.startswith('http')]
-                        local_paths = [m for m in all_media if not m.startswith('http')]
-                        msg_id = await pub.publish(product, http_urls[:6] if http_urls else local_paths[:6])
-                        product.channel_message_id = msg_id
-                        published += 1
-                    except Exception as e:
-                        print(f'[pipeline] publish error {product.id}: {e}', flush=True)
 
             except Exception as e:
                 print(f'[pipeline] error post {post.message_id}: {e}', flush=True)

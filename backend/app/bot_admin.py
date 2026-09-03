@@ -29,6 +29,7 @@ async def audit(admin_id: int, action: str, target: str = '', details: str = '')
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📝 Модерация', callback_data='menu:moderation')],
         [InlineKeyboardButton(text='📦 Товары', callback_data='menu:products'),
          InlineKeyboardButton(text='📋 Заказы', callback_data='menu:orders')],
         [InlineKeyboardButton(text='📊 Статистика', callback_data='menu:stats'),
@@ -108,6 +109,293 @@ async def back_main(call: CallbackQuery):
     if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
     await call.message.edit_text('NORMWEAR ADMIN', reply_markup=main_menu())
     await call.answer()
+
+# ── МОДЕРАЦИЯ ──
+
+_MOD_STATE: dict[int, dict] = {}
+
+def _mod_kb(pid: int, idx: int, total: int):
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton(text='⬅️', callback_data=f'mod:prev:{pid}'))
+    nav.append(InlineKeyboardButton(text=f'{idx+1}/{total}', callback_data='mod:noop'))
+    if idx < total - 1:
+        nav.append(InlineKeyboardButton(text='➡️', callback_data=f'mod:next:{pid}'))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        nav,
+        [InlineKeyboardButton(text='✅ Одобрить', callback_data=f'mod:approve:{pid}'),
+         InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'mod:edit:{pid}')],
+        [InlineKeyboardButton(text='🚀 Одобрить + В канал', callback_data=f'mod:approve_publish:{pid}')],
+        [InlineKeyboardButton(text='❌ Отклонить', callback_data=f'mod:reject:{pid}')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back:main')],
+    ])
+
+def _edit_kb(pid: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📝 Название', callback_data=f'mod:ed_title:{pid}'),
+         InlineKeyboardButton(text='📄 Описание', callback_data=f'mod:ed_desc:{pid}')],
+        [InlineKeyboardButton(text='💰 Цена', callback_data=f'mod:ed_price:{pid}'),
+         InlineKeyboardButton(text='📐 Размеры', callback_data=f'mod:ed_sizes:{pid}')],
+        [InlineKeyboardButton(text='📂 Категория', callback_data=f'mod:ed_cat:{pid}')],
+        [InlineKeyboardButton(text='✅ Сохранить', callback_data=f'mod:save:{pid}')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data=f'mod:back:{pid}')],
+    ])
+
+async def _show_moderation(call: CallbackQuery, page: int = 0):
+    async with SessionLocal() as db:
+        products = (await db.scalars(
+            select(Product).where(Product.status == 'pending', Product.channel_message_id.is_(None))
+            .order_by(Product.id.desc())
+        )).all()
+    if not products:
+        await call.message.edit_text('✅ Нет товаров на модерации', reply_markup=back_menu())
+        return
+    p = products[page]
+    media = json.loads(p.media_json) if p.media_json else []
+    sizes = json.loads(p.sizes_json) if p.sizes_json else []
+    has_photos = any(m.startswith('http') for m in media)
+    preview = (
+        f'📝 <b>Модерация #{p.id}</b> ({page+1}/{len(products)})\n\n'
+        f'<b>{p.title}</b>\n'
+        f'💰 Цена: <b>{float(p.sale_price):,.0f} ₽</b>\n'
+        f'📐 Размеры: {", ".join(sizes) if sizes else "—"}\n'
+        f'📂 Категория: {p.category or "—"}\n'
+        f'📸 Фото: {"✅" if has_photos else "❌ нет"} ({len(media)} шт)\n'
+        f'📦 Остаток: {p.stock}\n'
+    )
+    if p.description:
+        preview += f'\n📄 {p.description[:200]}'
+    _MOD_STATE[call.from_user.id] = {'products': products, 'page': page}
+    await call.message.edit_text(preview, parse_mode='HTML', reply_markup=_mod_kb(p.id, page, len(products)))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data == 'menu:moderation')
+async def menu_moderation(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    await _show_moderation(call, 0)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:next:'))
+async def mod_next(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    state = _MOD_STATE.get(call.from_user.id, {})
+    products = state.get('products', [])
+    page = state.get('page', 0)
+    if page < len(products) - 1:
+        await _show_moderation(call, page + 1)
+    else:
+        await call.answer('Больше нет')
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:prev:'))
+async def mod_prev(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    state = _MOD_STATE.get(call.from_user.id, {})
+    page = state.get('page', 0)
+    if page > 0:
+        await _show_moderation(call, page - 1)
+    else:
+        await call.answer('Больше нет')
+
+@dp.callback_query(lambda c: c.data == 'mod:noop')
+async def mod_noop(call: CallbackQuery):
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:approve:'))
+async def mod_approve(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(Product, pid)
+        if not p:
+            await call.answer('Товар не найден', show_alert=True)
+            return
+        p.status = 'approved'
+        await db.commit()
+    await call.answer('✅ Одобрено', show_alert=True)
+    await audit(call.from_user.id, 'mod_approve', f'#{pid}', p.title[:50])
+    state = _MOD_STATE.get(call.from_user.id, {})
+    products = state.get('products', [])
+    page = state.get('page', 0)
+    if page >= len(products) - 1 and page > 0:
+        page -= 1
+    await _show_moderation(call, page)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:approve_publish:'))
+async def mod_approve_publish(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(Product, pid)
+        if not p:
+            await call.answer('Товар не найден', show_alert=True)
+            return
+        p.status = 'approved'
+        await db.commit()
+    await call.message.edit_text('🚀 Публикация в канал...', reply_markup=back_menu())
+    try:
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            media = json.loads(p.media_json) if p.media_json else []
+            http_urls = [m for m in media if m.startswith('http')]
+            local_paths = [m for m in media if not m.startswith('http')]
+            urls = http_urls[:6] if http_urls else local_paths[:6]
+            if not urls:
+                await call.message.edit_text('❌ Нет фото для публикации', reply_markup=back_menu())
+                return
+            pub = ChannelPublisher()
+            msg_id = await pub.publish(p, urls)
+            p.channel_message_id = msg_id
+            p.status = 'published'
+            await db.commit()
+        await call.message.edit_text(
+            f'✅ <b>Опубликовано в канал!</b>\n\n'
+            f'{p.title[:50]}\n'
+            f'💰 {float(p.sale_price):,.0f} ₽\n'
+            f'📨 Message ID: {msg_id}',
+            parse_mode='HTML', reply_markup=back_menu()
+        )
+        await audit(call.from_user.id, 'mod_publish', f'#{pid}', f'msg={msg_id}')
+    except Exception as e:
+        await call.message.edit_text(f'❌ Ошибка публикации: {e}', reply_markup=back_menu())
+    state = _MOD_STATE.get(call.from_user.id, {})
+    products = state.get('products', [])
+    page = state.get('page', 0)
+    if page >= len(products) - 1 and page > 0:
+        page -= 1
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:reject:'))
+async def mod_reject(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(Product, pid)
+        if not p:
+            await call.answer('Товар не найден', show_alert=True)
+            return
+        p.status = 'rejected'
+        await db.commit()
+    await call.answer('❌ Отклонено', show_alert=True)
+    await audit(call.from_user.id, 'mod_reject', f'#{pid}', p.title[:50])
+    state = _MOD_STATE.get(call.from_user.id, {})
+    products = state.get('products', [])
+    page = state.get('page', 0)
+    if page >= len(products) - 1 and page > 0:
+        page -= 1
+    await _show_moderation(call, page)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:edit:'))
+async def mod_edit(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    async with SessionLocal() as db:
+        p = await db.get(Product, pid)
+        if not p:
+            await call.answer('Товар не найден', show_alert=True)
+            return
+    sizes = json.loads(p.sizes_json) if p.sizes_json else []
+    text = (
+        f'✏️ <b>Редактирование #{p.id}</b>\n\n'
+        f'📝 <b>{p.title}</b>\n'
+        f'💰 Цена: {float(p.sale_price):,.0f} ₽\n'
+        f'📐 Размеры: {", ".join(sizes) if sizes else "—"}\n'
+        f'📂 Категория: {p.category or "—"}\n\n'
+        f'Выбери что отредактировать:'
+    )
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=_edit_kb(pid))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:back:'))
+async def mod_back_to_queue(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    state = _MOD_STATE.get(call.from_user.id, {})
+    page = state.get('page', 0)
+    await _show_moderation(call, page)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:save:'))
+async def mod_save(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    state = _MOD_STATE.get(call.from_user.id, {})
+    pending = state.get('pending_edit', {})
+    if pending:
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            if p:
+                for field, value in pending.items():
+                    setattr(p, field, value)
+                await db.commit()
+        _MOD_STATE[call.from_user.id]['pending_edit'] = {}
+        await call.answer('✅ Сохранено', show_alert=True)
+    else:
+        await call.answer('Нет изменений')
+    state = _MOD_STATE.get(call.from_user.id, {})
+    page = state.get('page', 0)
+    await _show_moderation(call, page)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:ed_title:'))
+async def mod_edit_title(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    _MOD_STATE[call.from_user.id] = {**_MOD_STATE.get(call.from_user.id, {}), 'editing': 'title', 'edit_pid': pid}
+    await call.message.edit_text('📝 Введи новое название товара:', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'mod:edit:{pid}')]]))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:ed_desc:'))
+async def mod_edit_desc(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    _MOD_STATE[call.from_user.id] = {**_MOD_STATE.get(call.from_user.id, {}), 'editing': 'description', 'edit_pid': pid}
+    await call.message.edit_text('📄 Введи новое описание товара:', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'mod:edit:{pid}')]]))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:ed_price:'))
+async def mod_edit_price(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    _MOD_STATE[call.from_user.id] = {**_MOD_STATE.get(call.from_user.id, {}), 'editing': 'sale_price', 'edit_pid': pid}
+    await call.message.edit_text('💰 Введи новую цену (₽):', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'mod:edit:{pid}')]]))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:ed_sizes:'))
+async def mod_edit_sizes(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    _MOD_STATE[call.from_user.id] = {**_MOD_STATE.get(call.from_user.id, {}), 'editing': 'sizes_json', 'edit_pid': pid}
+    await call.message.edit_text('📐 Введи размеры через запятую (S, M, L, XL):', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'mod:edit:{pid}')]]))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('mod:ed_cat:'))
+async def mod_edit_cat(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    pid = int(call.data.split(':')[2])
+    _MOD_STATE[call.from_user.id] = {**_MOD_STATE.get(call.from_user.id, {}), 'editing': 'category', 'edit_pid': pid}
+    await call.message.edit_text('📂 Введи новую категорию:', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'mod:edit:{pid}')]]))
+    await call.answer()
+
+@dp.message(F.text & ~F.command)
+async def moderation_text_input(message: Message):
+    if not allowed(message.from_user.id): return
+    state = _MOD_STATE.get(message.from_user.id, {})
+    editing = state.get('editing')
+    pid = state.get('edit_pid')
+    if not editing or not pid:
+        return
+    text = message.text.strip()
+    pending = state.get('pending_edit', {})
+    if editing == 'sale_price':
+        try:
+            val = float(text.replace(',', '.').replace(' ', '').replace('₽', ''))
+            pending['sale_price'] = val
+        except ValueError:
+            return await message.answer('❌ Введи число. Пример: 1500')
+    elif editing == 'sizes_json':
+        sizes = [s.strip().upper() for s in text.split(',') if s.strip()]
+        pending['sizes_json'] = json.dumps(sizes, ensure_ascii=False)
+    else:
+        pending[editing] = text[:500]
+    _MOD_STATE[message.from_user.id]['pending_edit'] = pending
+    _MOD_STATE[message.from_user.id]['editing'] = None
+    await message.answer(f'✅ Записано. Нажми "Сохранить" чтобы применить.', reply_markup=_edit_kb(pid))
 
 # ── ПРОДУКТЫ ──
 
