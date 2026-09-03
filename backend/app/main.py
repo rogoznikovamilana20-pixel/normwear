@@ -24,10 +24,15 @@ def _require_admin(request: Request) -> None:
     token = request.headers.get('x-admin-token', '')
     if not token:
         raise HTTPException(401, 'Admin token required')
-    import hashlib, hmac as _hmac
-    expected = hashlib.sha256(f"normwear-{settings.admin_bot_token[-8:]}".encode()).hexdigest()[:32]
-    if not _hmac.compare_digest(token, expected):
-        raise HTTPException(403, 'Invalid admin token')
+    import hmac as _hmac
+    if settings.admin_secret:
+        if not _hmac.compare_digest(token, settings.admin_secret):
+            raise HTTPException(403, 'Invalid admin token')
+    else:
+        import hashlib
+        expected = hashlib.sha256(f"normwear-{settings.admin_bot_token[-8:]}".encode()).hexdigest()[:32]
+        if not _hmac.compare_digest(token, expected):
+            raise HTTPException(403, 'Invalid admin token')
 
 def _rate_key(request: Request) -> str:
     # prefer telegram user id from header if present, else IP
@@ -161,7 +166,25 @@ class Checkout(BaseModel):
             raise ValueError('Укажите корректный телефон')
 
 @app.get('/health')
-async def health(): return {'status': 'ok'}
+async def health():
+    from .db import SessionLocal
+    from .models import Product, Order, SourcePost
+    from sqlalchemy import select, func
+    try:
+        async with SessionLocal() as db:
+            products = await db.scalar(select(func.count(Product.id))) or 0
+            orders = await db.scalar(select(func.count(Order.id))) or 0
+            source_posts = await db.scalar(select(func.count(SourcePost.id))) or 0
+        return {
+            'status': 'ok',
+            'shop_bot': _bot_status.get('shop'),
+            'admin_bot': _bot_status.get('admin'),
+            'products': products,
+            'orders': orders,
+            'source_posts': source_posts,
+        }
+    except Exception as e:
+        return {'status': 'degraded', 'error': str(e)[:200]}
 
 @app.get('/bot-status')
 async def bot_status(): return _bot_status

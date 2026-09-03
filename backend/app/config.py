@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     admin_telegram_ids: str = ''
     auto_publish: bool = False
     webhook_url: str = ''
+    admin_secret: str = ''
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
     @property
