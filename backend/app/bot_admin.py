@@ -1277,6 +1277,51 @@ async def cmd_bulkmark(message: Message):
         await db.commit()
     await message.answer(f'✅ Наценка {pct}% применена\nОбновлено: {updated} товаров', reply_markup=back_menu())
 
+@dp.message(Command('sync'))
+async def cmd_sync(message: Message):
+    if not allowed(message.from_user.id): return
+    args = (message.text or '').split()
+    days = 7
+    if len(args) >= 2 and args[1].isdigit():
+        days = int(args[1])
+    await message.answer(f'⏳ Синхронизация с поставщиком ({days} дней)...', reply_markup=back_menu())
+    try:
+        from .pipeline import ingest_supplier
+        result = await ingest_supplier(days=days)
+        text = (f'✅ Синхронизация завершена\n\n'
+                f'📝 Постов обработано: {result["total_posts"]}\n'
+                f'🆕 Создано товаров: {result["created"]}\n'
+                f'⏭️ Пропущено: {result["skipped"]}\n'
+                f'📤 Опубликовано: {result["published"]}\n'
+                f'❌ Ошибок: {result["errors"]}')
+        await message.answer(text, reply_markup=back_menu())
+    except Exception as e:
+        await message.answer(f'❌ Ошибка: {e}', reply_markup=back_menu())
+
+@dp.message(Command('ingestion'))
+async def cmd_ingestion(message: Message):
+    if not allowed(message.from_user.id): return
+    from .models import SourcePost, ProcessingJob
+    async with SessionLocal() as db:
+        total = await db.scalar(select(func.count(SourcePost.id))) or 0
+        processed = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status == 'processed')) or 0
+        skipped = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.like('skipped%'))) or 0
+        errors = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.like('error%'))) or 0
+        products = await db.scalar(select(func.count(Product.id))) or 0
+        published = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
+        jobs_retry = await db.scalar(select(func.count(ProcessingJob.id)).where(ProcessingJob.status == 'retry')) or 0
+        jobs_failed = await db.scalar(select(func.count(ProcessingJob.id)).where(ProcessingJob.status == 'failed')) or 0
+    text = (f'📊 <b>Статистика ingestion</b>\n\n'
+            f'📥 Всего постов: {total}\n'
+            f'✅ Обработано: {processed}\n'
+            f'⏭️ Пропущено: {skipped}\n'
+            f'❌ Ошибок: {errors}\n\n'
+            f'🛍 Товаров: {products}\n'
+            f'📤 Опубликовано: {published}\n\n'
+            f'🔄 Retry: {jobs_retry}\n'
+            f'⛔ Failed: {jobs_failed}')
+    await message.answer(text, parse_mode='HTML', reply_markup=back_menu())
+
 # ── ФОТО / СТИКЕРЫ ──
 
 @dp.message(F.sticker | F.photo)

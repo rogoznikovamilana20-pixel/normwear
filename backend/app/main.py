@@ -12,7 +12,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from .db import SessionLocal
 from .models import Product, Order, OrderItem
 from .auth import validate_init_data
@@ -850,6 +850,69 @@ async def publish_to_channel(product_id: int, request: Request):
         traceback.print_exc()
         print(f'publish error: {e}', flush=True)
         raise HTTPException(500, f'Publish error: {str(e)}')
+
+# ── SOURCE POSTS & JOBS ──
+
+@app.get('/api/admin/source-posts')
+async def list_source_posts(request: Request, status: str = '', limit: int = 50):
+    _require_admin(request)
+    from .models import SourcePost
+    async with SessionLocal() as db:
+        q = select(SourcePost).order_by(SourcePost.id.desc()).limit(min(limit, 200))
+        if status:
+            q = q.where(SourcePost.processing_status == status)
+        rows = (await db.scalars(q)).all()
+    return [{'id': r.id, 'channel': r.source_channel, 'msg_id': r.source_message_id,
+             'album_id': r.source_album_id, 'media_count': r.media_count,
+             'product_id': r.product_id, 'status': r.processing_status,
+             'retries': r.retry_count, 'error': r.error_message,
+             'text_preview': (r.raw_text or '')[:120],
+             'created_at': r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+@app.get('/api/admin/jobs')
+async def list_jobs(request: Request, status: str = '', limit: int = 50):
+    _require_admin(request)
+    from .models import ProcessingJob
+    async with SessionLocal() as db:
+        q = select(ProcessingJob).order_by(ProcessingJob.id.desc()).limit(min(limit, 200))
+        if status:
+            q = q.where(ProcessingJob.status == status)
+        rows = (await db.scalars(q)).all()
+    return [{'id': r.id, 'type': r.job_type, 'status': r.status,
+             'attempts': r.attempts, 'max': r.max_attempts,
+             'error': r.error_message,
+             'next_retry': r.next_retry_at.isoformat() if r.next_retry_at else None,
+             'created_at': r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+@app.get('/api/admin/ingestion-stats')
+async def ingestion_stats(request: Request):
+    _require_admin(request)
+    from .models import SourcePost, ProcessingJob
+    async with SessionLocal() as db:
+        total = await db.scalar(select(func.count(SourcePost.id))) or 0
+        processed = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status == 'processed')) or 0
+        skipped = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.like('skipped%'))) or 0
+        errors = await db.scalar(select(func.count(SourcePost.id)).where(SourcePost.processing_status.like('error%'))) or 0
+        products = await db.scalar(select(func.count(Product.id))) or 0
+        published = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
+        jobs_pending = await db.scalar(select(func.count(ProcessingJob.id)).where(ProcessingJob.status == 'pending')) or 0
+        jobs_retry = await db.scalar(select(func.count(ProcessingJob.id)).where(ProcessingJob.status == 'retry')) or 0
+        jobs_failed = await db.scalar(select(func.count(ProcessingJob.id)).where(ProcessingJob.status == 'failed')) or 0
+    return {'source_posts': {'total': total, 'processed': processed, 'skipped': skipped, 'errors': errors},
+            'products': {'total': products, 'published': published},
+            'jobs': {'pending': jobs_pending, 'retry': jobs_retry, 'failed': jobs_failed}}
+
+@app.post('/api/admin/trigger-sync')
+async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
+    _require_admin(request)
+    body = await request.json() if request.headers.get('content-type') == 'application/json' else {}
+    days = body.get('days', 7)
+    async def _run():
+        from .pipeline import ingest_supplier
+        result = await ingest_supplier(days=days)
+        print(f'[trigger-sync] {result}', flush=True)
+    background_tasks.add_task(_run)
+    return {'status': 'started', 'days': days}
 
 # ── LOYALTY ──
 
