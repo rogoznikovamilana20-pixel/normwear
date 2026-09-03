@@ -733,6 +733,8 @@ async def admin_analytics(request: Request):
         paid_orders = await db.scalar(select(func.count(Order.id)).where(Order.status == 'paid')) or 0
         total_products = await db.scalar(select(func.count(Product.id))) or 0
         published_products = await db.scalar(select(func.count(Product.id)).where(Product.status == 'published')) or 0
+        pending_products = await db.scalar(select(func.count(Product.id)).where(Product.status == 'pending')) or 0
+        approved_products = await db.scalar(select(func.count(Product.id)).where(Product.status == 'approved')) or 0
         total_users = await db.scalar(select(func.count(func.distinct(Order.telegram_user_id)))) or 0
         total_reviews = await db.scalar(select(func.count(Review.id)).where(Review.status == 'approved')) or 0
         avg_rating = await db.scalar(select(func.coalesce(func.avg(Review.rating), 0)).where(Review.status == 'approved')) or 0
@@ -754,6 +756,8 @@ async def admin_analytics(request: Request):
         'paid_orders': paid_orders,
         'total_products': total_products,
         'published_products': published_products,
+        'pending_products': pending_products,
+        'approved_products': approved_products,
         'total_users': total_users,
         'total_reviews': total_reviews,
         'avg_rating': round(float(avg_rating), 1),
