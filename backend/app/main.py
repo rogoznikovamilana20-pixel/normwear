@@ -66,37 +66,23 @@ async def lifespan(app_instance):
 
     async def _run_bot(name: str, token: str, dp):
         _bot_status[name] = "starting"
-        if webhook_url:
-            # WEBHOOK MODE
+        # ALWAYS use polling mode — more reliable than webhooks on Render free tier
+        backoff = 1
+        while True:
             try:
                 bot = Bot(token)
                 await bot.delete_webhook(drop_pending_updates=True)
-                wh = f"{webhook_url.rstrip('/')}/webhook/{name}"
-                await bot.set_webhook(wh, drop_pending_updates=True)
-                await bot.session.close()
-                _bot_status[name] = "webhook"
-                print(f"[{name}] webhook set: {wh}", flush=True)
+                _bot_status[name] = "polling"
+                print(f"[{name}] starting polling", flush=True)
+                await dp.start_polling(bot)
+                _bot_status[name] = "stopped"
+                print(f"[{name}] polling ended normally", flush=True)
             except Exception as e:
-                print(f"[{name}] webhook error: {e}", flush=True)
-                _bot_status[name] = f"webhook_error: {e}"
-        else:
-            # POLLING MODE
-            backoff = 1
-            while True:
-                try:
-                    bot = Bot(token)
-                    await bot.delete_webhook(drop_pending_updates=True)
-                    _bot_status[name] = "polling"
-                    print(f"[{name}] starting polling", flush=True)
-                    await dp.start_polling(bot)
-                    _bot_status[name] = "stopped"
-                    print(f"[{name}] polling ended normally", flush=True)
-                except Exception as e:
-                    import traceback; traceback.print_exc()
-                    _bot_status[name] = f"crashed: {e}"
-                    print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                import traceback; traceback.print_exc()
+                _bot_status[name] = f"crashed: {e}"
+                print(f"[{name}] polling crashed: {e}, restarting in {backoff}s", flush=True)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
 
     async def _run_supplier():
         try:
@@ -196,33 +182,11 @@ from aiogram.types import Update as AiogramUpdate
 
 @app.post('/webhook/shop')
 async def webhook_shop(request: Request):
-    try:
-        body = await request.json()
-        update = AiogramUpdate.model_validate(body)
-        await shop_dp.feed_update(get_shop_bot(), update)
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"[webhook/shop] error: {e}\n{tb}", flush=True)
-        _webhook_errors.append({"bot": "shop", "error": str(e)[:300], "traceback": tb[-500:], "ts": time.time()})
-        if len(_webhook_errors) > 50:
-            _webhook_errors.pop(0)
-    return {"ok": True}
+    return {"ok": True, "note": "polling mode active, webhooks disabled"}
 
 @app.post('/webhook/admin')
 async def webhook_admin(request: Request):
-    try:
-        body = await request.json()
-        update = AiogramUpdate.model_validate(body)
-        await admin_dp.feed_update(get_admin_bot(), update)
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"[webhook/admin] error: {e}\n{tb}", flush=True)
-        _webhook_errors.append({"bot": "admin", "error": str(e)[:300], "traceback": tb[-500:], "ts": time.time()})
-        if len(_webhook_errors) > 50:
-            _webhook_errors.pop(0)
-    return {"ok": True}
+    return {"ok": True, "note": "polling mode active, webhooks disabled"}
 
 @app.get('/api/admin/test-webhook')
 async def test_webhook_admin(request: Request):
