@@ -1921,7 +1921,7 @@ async def _handle_forwarded_message(message: Message):
         return
 
     try:
-        grouped_id = message.grouped_id
+        grouped_id = getattr(message, 'media_group_id', None)
         if grouped_id:
             key = (message.chat.id, grouped_id)
             _media_buffer.setdefault(key, []).append(message)
