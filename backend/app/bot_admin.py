@@ -1,4 +1,4 @@
-import asyncio, csv, time
+import asyncio, csv, time, contextlib, os, tempfile
 from datetime import datetime, timezone, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -374,6 +374,28 @@ async def mod_edit_cat(call: CallbackQuery):
 @dp.message(F.text & ~F.command)
 async def moderation_text_input(message: Message):
     if not allowed(message.from_user.id): return
+
+    if _user_state.get(message.from_user.id) == 'fwd_edit':
+        for fwd_id, state in _forward_state.items():
+            editing = state.get('_editing')
+            if editing:
+                text = message.text.strip()
+                if editing == 'sale_price':
+                    try:
+                        val = float(text.replace(',', '.').replace(' ', '').replace('₽', ''))
+                        state['edits']['sale_price'] = val
+                    except ValueError:
+                        return await message.answer('❌ Введи число. Пример: 1500')
+                elif editing == 'sizes_json':
+                    sizes = [s.strip().upper() for s in text.split(',') if s.strip()]
+                    state['edits']['sizes_json'] = json.dumps(sizes, ensure_ascii=False)
+                else:
+                    state['edits'][editing] = text[:500]
+                state['_editing'] = None
+                _user_state[message.from_user.id] = None
+                await message.answer(f'✅ Записано. Нажми "💾 Сохранить" для обновления.', reply_markup=_forward_edit_kb(fwd_id))
+                return
+
     state = _MOD_STATE.get(message.from_user.id, {})
     editing = state.get('editing')
     pid = state.get('edit_pid')
@@ -1764,11 +1786,486 @@ async def cmd_ingestion(message: Message):
             f'⛔ Failed: {jobs_failed}')
     await message.answer(text, parse_mode='HTML', reply_markup=back_menu())
 
+# ── ПЕРЕСЫЛКА ИЗ КАНАЛА ПОСТАВЩИКА ──
+
+import uuid
+from aiogram.types import MessageOriginChannel, MessageOriginChat, MessageOriginUser
+
+_forward_state: dict[str, dict] = {}
+_media_buffer: dict[tuple[int, int], list] = {}
+_media_timers: dict[tuple[int, int], asyncio.Task] = {}
+
+def _gen_fwd_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+def _build_forward_caption(parsed, price: float) -> str:
+    from html import escape
+    title = escape(parsed.title) if parsed.title else 'Товар'
+    brand = escape(parsed.brand) if parsed.brand else ''
+    desc = escape(parsed.description[:400]) if parsed.description else ''
+    sizes = ', '.join(parsed.sizes) if parsed.sizes else 'уточняйте'
+    lines = [f'🔥 <b>{title}</b>']
+    if brand:
+        lines.append(f'🏷 {brand}')
+    if desc:
+        lines.append(f'\n{desc}')
+    lines.append(f'\n📐 Размерный ряд: <b>{sizes}</b>')
+    lines.append(f'🚚 Отправка из Москвы\n')
+    lines.append(f'💰 Цена: <b>{price:,.0f} ₽</b>\n')
+    lines.append(f'👜 Купить в боте: @norm_shop_bot')
+    lines.append(f'— — —')
+    lines.append(f'📦 Доставка по всей России 🇷🇺')
+    lines.append(f'💳 Оплата при получении ✅')
+    return '\n'.join(lines)
+
+def _forward_preview_kb(fwd_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='✅ Опубликовать в канал', callback_data=f'fwd:publish:{fwd_id}')],
+        [InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'fwd:edit_menu:{fwd_id}')],
+        [InlineKeyboardButton(text='❌ Отмена', callback_data=f'fwd:cancel:{fwd_id}')],
+    ])
+
+def _forward_edit_kb(fwd_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📝 Название', callback_data=f'fwd:ed_title:{fwd_id}')],
+        [InlineKeyboardButton(text='📄 Описание', callback_data=f'fwd:ed_desc:{fwd_id}')],
+        [InlineKeyboardButton(text='💰 Цена', callback_data=f'fwd:ed_price:{fwd_id}')],
+        [InlineKeyboardButton(text='📐 Размеры', callback_data=f'fwd:ed_sizes:{fwd_id}')],
+        [InlineKeyboardButton(text='🏷 Бренд', callback_data=f'fwd:ed_brand:{fwd_id}')],
+        [InlineKeyboardButton(text='📂 Категория', callback_data=f'fwd:ed_cat:{fwd_id}')],
+        [InlineKeyboardButton(text='💾 Сохранить', callback_data=f'fwd:save:{fwd_id}')],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data=f'fwd:back:{fwd_id}')],
+    ])
+
+def _get_fwd_data(fwd_id: str) -> dict | None:
+    return _forward_state.get(fwd_id)
+
+async def _process_forwarded_media_group(chat_id: int, grouped_id: int):
+    """Called after delay to process buffered media group."""
+    key = (chat_id, grouped_id)
+    messages = _media_buffer.pop(key, [])
+    _media_timers.pop(key, None)
+    if not messages:
+        return
+    messages.sort(key=lambda m: m.message_id)
+
+    text_msg = next((m for m in messages if m.caption and m.forward_origin), messages[0])
+    origin = text_msg.forward_origin
+    fwd_chat_title = ''
+    fwd_msg_id = None
+    if isinstance(origin, MessageOriginChannel):
+        fwd_chat_title = origin.chat.title if origin.chat else ''
+        fwd_msg_id = origin.message_id
+    elif isinstance(origin, MessageOriginChat):
+        fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
+    elif isinstance(origin, MessageOriginUser):
+        fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
+
+    raw_text = text_msg.caption or text_msg.text or ''
+    photo_ids = []
+    for m in messages:
+        if m.photo:
+            photo_ids.append(m.photo[-1].file_id)
+
+    from .parser import parse_product, ParsedProduct
+    parsed = parse_product(raw_text)
+
+    if not parsed:
+        parsed = ParsedProduct(
+            title=raw_text[:100] if raw_text else 'Товар',
+            purchase_price=0,
+            sizes=[],
+            description=raw_text,
+            brand=None,
+            category='Другое',
+            stock=1,
+        )
+
+    sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
+    fwd_id = _gen_fwd_id()
+
+    _forward_state[fwd_id] = {
+        'text': raw_text,
+        'photo_ids': photo_ids,
+        'parsed': parsed,
+        'sale_price': sale_price,
+        'fwd_chat_title': fwd_chat_title,
+        'fwd_msg_id': fwd_msg_id,
+        'edits': {},
+    }
+
+    caption = _build_forward_caption(parsed, sale_price)
+    kb = _forward_preview_kb(fwd_id)
+
+    bot = get_admin_bot()
+    if photo_ids:
+        try:
+            if len(photo_ids) == 1:
+                await bot.send_photo(chat_id, photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
+            else:
+                from aiogram.types import InputMediaPhoto
+                group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
+                for pid in photo_ids[1:9]:
+                    group.append(InputMediaPhoto(media=pid))
+                await bot.send_media_group(chat_id, group)
+                await bot.send_message(chat_id, '⬆️ Превью поста. Выбери действие:', reply_markup=kb)
+        except Exception as e:
+            await bot.send_message(chat_id, f'⚠️ Ошибка отправки: {e}\n\n<b>Текст поста:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
+    else:
+        await bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=kb)
+
+async def _handle_forwarded_message(message: Message):
+    """Handle a single forwarded message (non-album or first in album)."""
+    if not allowed(message.from_user.id):
+        return
+
+    grouped_id = message.grouped_id
+    if grouped_id:
+        key = (message.chat.id, grouped_id)
+        _media_buffer.setdefault(key, []).append(message)
+        if key in _media_timers:
+            _media_timers[key].cancel()
+        _media_timers[key] = asyncio.create_task(
+            _process_forwarded_media_group(message.chat.id, grouped_id),
+            name=f'fwd_media_{grouped_id}'
+        )
+        return
+
+    origin = message.forward_origin
+    fwd_chat_title = ''
+    fwd_msg_id = None
+    if isinstance(origin, MessageOriginChannel):
+        fwd_chat_title = origin.chat.title if origin.chat else ''
+        fwd_msg_id = origin.message_id
+    elif isinstance(origin, MessageOriginChat):
+        fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
+    elif isinstance(origin, MessageOriginUser):
+        fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
+
+    raw_text = message.caption or message.text or ''
+    photo_ids = []
+    if message.photo:
+        photo_ids.append(message.photo[-1].file_id)
+
+    from .parser import parse_product, ParsedProduct
+    parsed = parse_product(raw_text)
+
+    if not parsed:
+        parsed = ParsedProduct(
+            title=raw_text[:100] if raw_text else 'Товар',
+            purchase_price=0,
+            sizes=[],
+            description=raw_text,
+            brand=None,
+            category='Другое',
+            stock=1,
+        )
+
+    sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
+    fwd_id = _gen_fwd_id()
+
+    _forward_state[fwd_id] = {
+        'text': raw_text,
+        'photo_ids': photo_ids,
+        'parsed': parsed,
+        'sale_price': sale_price,
+        'fwd_chat_title': fwd_chat_title,
+        'fwd_msg_id': fwd_msg_id,
+        'edits': {},
+    }
+
+    caption = _build_forward_caption(parsed, sale_price)
+    kb = _forward_preview_kb(fwd_id)
+
+    if photo_ids:
+        try:
+            if len(photo_ids) == 1:
+                await message.answer_photo(photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
+            else:
+                from aiogram.types import InputMediaPhoto
+                group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
+                for pid in photo_ids[1:9]:
+                    group.append(InputMediaPhoto(media=pid))
+                await message.answer_media_group(group)
+                await message.answer('⬆️ Превью поста. Выбери действие:', reply_markup=kb)
+        except Exception as e:
+            await message.answer(f'⚠️ Ошибка: {e}\n\n<b>Текст:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
+    else:
+        await message.answer(caption, parse_mode='HTML', reply_markup=kb)
+
+@dp.message(F.forward_origin)
+async def on_forwarded(message: Message):
+    await _handle_forwarded_message(message)
+
+# ── FORWARD CALLBACKS ──
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:publish:'))
+async def fwd_publish(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    fwd_id = call.data.split(':')[2]
+    state = _get_fwd_data(fwd_id)
+    if not state:
+        return await call.answer('⚠️ Данные устарели', show_alert=True)
+    await call.answer('⏳ Публикация...')
+
+    parsed = state['parsed']
+    edits = state.get('edits', {})
+    title = edits.get('title', parsed.title)
+    brand = edits.get('brand', parsed.brand or '')
+    desc = edits.get('description', parsed.description)
+    sale_price = edits.get('sale_price', state['sale_price'])
+    sizes = edits.get('sizes_json', json.dumps(parsed.sizes, ensure_ascii=False))
+    category = edits.get('category', parsed.category or 'Другое')
+
+    try:
+        sizes_list = json.loads(sizes) if isinstance(sizes, str) else sizes
+    except Exception:
+        sizes_list = parsed.sizes
+
+    media_urls = []
+    for fid in state.get('photo_ids', []):
+        media_urls.append(fid)
+
+    async with SessionLocal() as db:
+        product = Product(
+            supplier_chat=f'forward:{state.get("fwd_chat_title", "")}',
+            supplier_message_id=state.get('fwd_msg_id') or 0,
+            sku=parsed.article,
+            brand=brand if brand else None,
+            model=parsed.model,
+            title=title[:255],
+            description=desc,
+            category=category,
+            sizes_json=json.dumps(sizes_list, ensure_ascii=False),
+            media_json=json.dumps(media_urls, ensure_ascii=False),
+            purchase_price=parsed.purchase_price,
+            sale_price=sale_price,
+            stock=parsed.stock if parsed.stock > 0 else 1,
+            status='published',
+        )
+        db.add(product)
+        await db.commit()
+        await db.refresh(product)
+        pid = product.id
+
+    bot = get_admin_bot()
+    msg_id = None
+    try:
+        pub = ChannelPublisher()
+        caption = _build_forward_caption(
+            ParsedProduct(title=title, purchase_price=parsed.purchase_price, sizes=sizes_list, description=desc, brand=brand, category=category, stock=parsed.stock),
+            sale_price,
+        )
+        if media_urls:
+            from aiogram.types import InputMediaPhoto, FSInputFile
+            import tempfile, httpx as _httpx
+
+            downloaded = []
+            for fid in media_urls[:6]:
+                try:
+                    file = await bot.get_file(fid)
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                    await bot.download_file(file.file_path, tmp.name)
+                    downloaded.append(tmp.name)
+                except Exception:
+                    pass
+
+            try:
+                if len(downloaded) == 1:
+                    msg = await bot.send_photo(
+                        settings.shop_channel_id, FSInputFile(downloaded[0]),
+                        caption=caption, parse_mode='HTML',
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text='🛍 Купить в каталоге', url=f'https://t.me/{settings.shop_username}')],
+                            [InlineKeyboardButton(text='💬 Спросить в боте', url=f'https://t.me/{settings.shop_username}')],
+                        ]),
+                    )
+                    msg_id = msg.message_id
+                elif len(downloaded) > 1:
+                    group = [
+                        InputMediaPhoto(media=FSInputFile(f), parse_mode='HTML' if i == 0 else None, caption=caption if i == 0 else None)
+                        for i, f in enumerate(downloaded)
+                    ]
+                    await bot.send_media_group(settings.shop_channel_id, group)
+                    ctrl = await bot.send_message(
+                        settings.shop_channel_id, '🛍 Новый товар в каталоге:',
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text='🛍 Купить в каталоге', url=f'https://t.me/{settings.shop_username}')],
+                        ]),
+                    )
+                    msg_id = ctrl.message_id
+            finally:
+                for f in downloaded:
+                    with contextlib.suppress(Exception):
+                        os.unlink(f)
+        else:
+            msg = await bot.send_message(
+                settings.shop_channel_id, caption, parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text='🛍 Купить в каталоге', url=f'https://t.me/{settings.shop_username}')],
+                ]),
+            )
+            msg_id = msg.message_id
+    except Exception as e:
+        await call.message.edit_text(f'⚠️ Ошибка публикации в канал: {e}', reply_markup=back_menu())
+        return
+
+    if msg_id:
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            if p:
+                p.channel_message_id = msg_id
+                await db.commit()
+
+    _forward_state.pop(fwd_id, None)
+    await call.message.edit_text(
+        f'✅ <b>Опубликовано!</b>\n\n'
+        f'📌 {title[:50]}\n'
+        f'💰 {sale_price:,.0f} ₽\n'
+        f'🆔 Товар #{pid}\n'
+        f'📨 Канал msg_id: {msg_id}',
+        parse_mode='HTML',
+        reply_markup=back_menu(),
+    )
+    await audit(call.from_user.id, 'forward_publish', f'#{pid}', f'{title[:40]} — {sale_price}₽')
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:edit_menu:'))
+async def fwd_edit_menu(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    fwd_id = call.data.split(':')[2]
+    state = _get_fwd_data(fwd_id)
+    if not state:
+        return await call.answer('⚠️ Данные устарели', show_alert=True)
+    parsed = state['parsed']
+    edits = state.get('edits', {})
+    title = edits.get('title', parsed.title)
+    brand = edits.get('brand', parsed.brand or '—')
+    desc = edits.get('description', parsed.description or '—')
+    price = edits.get('sale_price', state['sale_price'])
+    sizes_str = edits.get('sizes_json', None)
+    if sizes_str:
+        try:
+            sizes_list = json.loads(sizes_str)
+        except Exception:
+            sizes_list = parsed.sizes
+    else:
+        sizes_list = parsed.sizes
+    cat = edits.get('category', parsed.category or '—')
+    text = (
+        f'✏️ <b>Редактирование поста</b>\n\n'
+        f'📌 Название: {title[:50]}\n'
+        f'🏷 Бренд: {brand}\n'
+        f'💰 Цена: {price:,.0f} ₽\n'
+        f'📐 Размеры: {", ".join(sizes_list) if sizes_list else "—"}\n'
+        f'📂 Категория: {cat}\n'
+        f'📄 Описание: {desc[:80] if desc else "—"}...\n\n'
+        f'Нажми на поле для редактирования:'
+    )
+    await call.message.edit_text(text, parse_mode='HTML', reply_markup=_forward_edit_kb(fwd_id))
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:ed_'))
+async def fwd_edit_field(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    parts = call.data.split(':')
+    field = parts[1]  # ed_title, ed_desc, ed_price, ed_sizes, ed_brand, ed_cat
+    fwd_id = parts[2]
+    state = _get_fwd_data(fwd_id)
+    if not state:
+        return await call.answer('⚠️ Данные устарели', show_alert=True)
+
+    field_map = {
+        'ed_title': ('📝 Название', 'title'),
+        'ed_desc': ('📄 Описание', 'description'),
+        'ed_price': ('💰 Цена (₽)', 'sale_price'),
+        'ed_sizes': ('📐 Размеры через запятую', 'sizes_json'),
+        'ed_brand': ('🏷 Бренд', 'brand'),
+        'ed_cat': ('📂 Категория', 'category'),
+    }
+    label, key = field_map.get(field, ('Поле', field))
+    _forward_state[fwd_id]['_editing'] = key
+    _forward_state[fwd_id]['_fwd_id'] = fwd_id
+    _user_state[call.from_user.id] = 'fwd_edit'
+
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='⬅️ Отмена', callback_data=f'fwd:edit_menu:{fwd_id}')]
+    ])
+    await call.message.edit_text(f'{label}:\n\nВведи новое значение:', reply_markup=cancel_kb)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:save:'))
+async def fwd_save(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    fwd_id = call.data.split(':')[2]
+    await call.answer('✅ Сохранено')
+    await _refresh_forward_preview(call.message, fwd_id, call.from_user.id)
+
+async def _refresh_forward_preview(message, fwd_id: str, user_id: int):
+    state = _get_fwd_data(fwd_id)
+    if not state:
+        return
+    parsed = state['parsed']
+    edits = state.get('edits', {})
+    title = edits.get('title', parsed.title)
+    brand = edits.get('brand', parsed.brand or '')
+    desc = edits.get('description', parsed.description)
+    sale_price = edits.get('sale_price', state['sale_price'])
+    sizes_str = edits.get('sizes_json', None)
+    if sizes_str:
+        try:
+            sizes_list = json.loads(sizes_str)
+        except Exception:
+            sizes_list = parsed.sizes
+    else:
+        sizes_list = parsed.sizes
+    category = edits.get('category', parsed.category or 'Другое')
+
+    caption = _build_forward_caption(
+        ParsedProduct(title=title, purchase_price=parsed.purchase_price, sizes=sizes_list, description=desc, brand=brand, category=category, stock=parsed.stock),
+        sale_price,
+    )
+    kb = _forward_preview_kb(fwd_id)
+    bot = get_admin_bot()
+
+    photo_ids = state.get('photo_ids', [])
+    try:
+        if photo_ids:
+            if len(photo_ids) == 1:
+                msg = await bot.send_photo(user_id, photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
+            else:
+                from aiogram.types import InputMediaPhoto
+                group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
+                for pid in photo_ids[1:9]:
+                    group.append(InputMediaPhoto(media=pid))
+                await bot.send_media_group(user_id, group)
+                msg = await bot.send_message(user_id, '⬆️ Обновлённый превью:', reply_markup=kb)
+        else:
+            msg = await bot.send_message(user_id, caption, parse_mode='HTML', reply_markup=kb)
+    except Exception as e:
+        msg = await bot.send_message(user_id, f'⚠️ {e}\n\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:back:'))
+async def fwd_back(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    fwd_id = call.data.split(':')[2]
+    await _refresh_forward_preview(call.message, fwd_id, call.from_user.id)
+    await call.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('fwd:cancel:'))
+async def fwd_cancel(call: CallbackQuery):
+    if not allowed(call.from_user.id): return await call.answer('Нет доступа', show_alert=True)
+    fwd_id = call.data.split(':')[2]
+    _forward_state.pop(fwd_id, None)
+    await call.message.edit_text('❌ Отменено.', reply_markup=back_menu())
+    await call.answer()
+
 # ── ФОТО / СТИКЕРЫ ──
 
 @dp.message(F.sticker | F.photo)
 async def on_media(message: Message):
     if not allowed(message.from_user.id): return
+    if message.forward_origin:
+        return await _handle_forwarded_message(message)
     if message.photo and message.reply_to_message:
         return
     await message.answer('Принимаю только текст.', reply_markup=back_menu())
