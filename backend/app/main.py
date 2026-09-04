@@ -834,7 +834,7 @@ async def batch_update_media(request: Request):
         for item in updates:
             pid = item.get('id')
             media = item.get('media', [])
-            if not pid or not media:
+            if not pid:
                 skipped += 1
                 continue
             try:
