@@ -372,13 +372,15 @@ async def mod_edit_cat(call: CallbackQuery):
     await call.answer()
 
 @dp.message(F.text & ~F.command)
-async def moderation_text_input(message: Message):
+async def text_input(message: Message):
     if not allowed(message.from_user.id): return
 
     if _is_forwarded(message):
         return await _handle_forwarded_message(message)
 
-    if _user_state.get(message.from_user.id) == 'fwd_edit':
+    uid = message.from_user.id
+
+    if _user_state.get(uid) == 'fwd_edit':
         for fwd_id, state in _forward_state.items():
             editing = state.get('_editing')
             if editing:
@@ -395,31 +397,268 @@ async def moderation_text_input(message: Message):
                 else:
                     state['edits'][editing] = text[:500]
                 state['_editing'] = None
-                _user_state[message.from_user.id] = None
+                _user_state[uid] = None
                 await message.answer(f'✅ Записано. Нажми "💾 Сохранить" для обновления.', reply_markup=_forward_edit_kb(fwd_id))
                 return
 
-    state = _MOD_STATE.get(message.from_user.id, {})
-    editing = state.get('editing')
-    pid = state.get('edit_pid')
-    if not editing or not pid:
+    mod_state = _MOD_STATE.get(uid, {})
+    if mod_state.get('editing') and mod_state.get('edit_pid'):
+        editing = mod_state['editing']
+        pid = mod_state['edit_pid']
+        text = message.text.strip()
+        pending = mod_state.get('pending_edit', {})
+        if editing == 'sale_price':
+            try:
+                val = float(text.replace(',', '.').replace(' ', '').replace('₽', ''))
+                pending['sale_price'] = val
+            except ValueError:
+                return await message.answer('❌ Введи число. Пример: 1500')
+        elif editing == 'sizes_json':
+            sizes = [s.strip().upper() for s in text.split(',') if s.strip()]
+            pending['sizes_json'] = json.dumps(sizes, ensure_ascii=False)
+        else:
+            pending[editing] = text[:500]
+        _MOD_STATE[uid]['pending_edit'] = pending
+        _MOD_STATE[uid]['editing'] = None
+        await message.answer(f'✅ Записано. Нажми "Сохранить" чтобы применить.', reply_markup=_edit_kb(pid))
         return
-    text = message.text.strip()
-    pending = state.get('pending_edit', {})
-    if editing == 'sale_price':
+
+    state = _user_state.get(uid)
+    if not state: return
+    await _handle_state_input(message, uid, state)
+
+async def _handle_state_input(message, uid, state):
+    if state.startswith('awaiting_price:'):
+        pid = int(state.split(':')[1])
         try:
-            val = float(text.replace(',', '.').replace(' ', '').replace('₽', ''))
-            pending['sale_price'] = val
+            price = float(message.text.strip().replace(',', '.'))
         except ValueError:
-            return await message.answer('❌ Введи число. Пример: 1500')
-    elif editing == 'sizes_json':
-        sizes = [s.strip().upper() for s in text.split(',') if s.strip()]
-        pending['sizes_json'] = json.dumps(sizes, ensure_ascii=False)
-    else:
-        pending[editing] = text[:500]
-    _MOD_STATE[message.from_user.id]['pending_edit'] = pending
-    _MOD_STATE[message.from_user.id]['editing'] = None
-    await message.answer(f'✅ Записано. Нажми "Сохранить" чтобы применить.', reply_markup=_edit_kb(pid))
+            return await message.answer('Нужно число. Попробуй ещё:')
+        if price < 100 or price > 500000:
+            return await message.answer('Цена 100-500000 ₽. Попробуй ещё:')
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            if not p:
+                _user_state.pop(uid, None)
+                return await message.answer('Товар не найден.')
+            old = float(p.sale_price)
+            p.sale_price = price
+            p.price_confidence = 1.0
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ #{pid} цена {old:,.0f} → {price:,.0f} ₽', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_stock:'):
+        pid = int(state.split(':')[1])
+        try:
+            num = int(message.text.strip())
+        except ValueError:
+            return await message.answer('Нужно целое число. Попробуй ещё:')
+        if num < 0 or num > 10000:
+            return await message.answer('Остаток 0-10000. Попробуй ещё:')
+        async with SessionLocal() as db:
+            p = await db.get(Product, pid)
+            if not p:
+                _user_state.pop(uid, None)
+                return await message.answer('Товар не найден.')
+            p.stock = num
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ #{pid} остаток → {num}', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_delivery:'):
+        oid = int(state.split(':')[1])
+        try:
+            cost = float(message.text.strip().replace(',', '.'))
+        except ValueError:
+            return await message.answer('Нужно число. Попробуй ещё:')
+        async with SessionLocal() as db:
+            o = await db.get(Order, oid)
+            if not o:
+                _user_state.pop(uid, None)
+                return await message.answer('Заказ не найден.')
+            o.delivery_cost = cost
+            o.total = float(o.subtotal) + cost
+            o.status = 'awaiting_payment'
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Заказ #{oid}: доставка {cost:,.0f} ₽. Итого: {float(o.total):,.0f} ₽', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_tracking_number:'):
+        parts = state.split(':')
+        oid, carrier = int(parts[1]), parts[2]
+        tracking = message.text.strip()
+        if len(tracking) < 3:
+            return await message.answer('Трек-номер слишком короткий. Попробуй ещё:')
+        async with SessionLocal() as db:
+            shipment = Shipment(order_id=oid, carrier=carrier, tracking_number=tracking, status='registered')
+            db.add(shipment)
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Трек-номер для #{oid}: {carrier} → {tracking}', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_tracking:'):
+        _user_state.pop(uid, None)
+        return
+
+    elif state.startswith('awaiting_promo_code'):
+        code = message.text.strip().upper()
+        if len(code) < 3 or len(code) > 20:
+            return await message.answer('Код 3-20 символов. Попробуй ещё:')
+        async with SessionLocal() as db:
+            exists = await db.scalar(select(PromoCode).where(PromoCode.code == code))
+        if exists:
+            return await message.answer('Такой код уже есть. Попробуй другой:')
+        _user_state[uid] = f'awaiting_promo_type:{code}'
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='% Процент', callback_data=f'promotype:{code}:percent'),
+             InlineKeyboardButton(text='₽ Сумма', callback_data=f'promotype:{code}:fixed')],
+        ])
+        await message.answer(f'Код: <code>{code}</code>\nТип скидки:', parse_mode='HTML', reply_markup=kb)
+
+    elif state.startswith('awaiting_promo_value:'):
+        parts = state.split(':')
+        code, dtype = parts[1], parts[2]
+        try:
+            value = float(message.text.strip().replace(',', '.'))
+        except ValueError:
+            return await message.answer('Нужно число. Попробуй ещё:')
+        if value <= 0 or value > 100:
+            return await message.answer('Значение 0-100. Попробуй ещё:')
+        async with SessionLocal() as db:
+            promo = PromoCode(code=code, discount_type=dtype, discount_value=value, active=True)
+            db.add(promo)
+            await db.commit()
+        _user_state.pop(uid, None)
+        disc = f'{value}%' if dtype == 'percent' else f'{value:,.0f} ₽'
+        await message.answer(f'✅ Промокод <code>{code}</code> создан: {disc}', parse_mode='HTML', reply_markup=back_menu())
+        await audit(uid, 'promo_create', code, disc)
+
+    elif state.startswith('awaiting_promo_'):
+        _user_state.pop(uid, None)
+        return
+
+    elif state.startswith('awaiting_broadcast_segment:'):
+        segment = state.split(':')[1]
+        _user_state.pop(uid, None)
+        raw = message.text.strip()
+        if len(raw) > 4000:
+            return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
+        now_dt = datetime.now(timezone.utc)
+        week_ago = now_dt - timedelta(weeks=1)
+        async with SessionLocal() as db:
+            if segment == 'buyers':
+                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
+            elif segment == 'non_buyers':
+                all_users = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
+                recent = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
+                user_ids = [u for u in all_users if u not in recent]
+            else:
+                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
+        if not user_ids:
+            return await message.answer('Нет пользователей в этом сегменте.', reply_markup=back_menu())
+        bot = get_shop_bot()
+        sent, failed = 0, 0
+        for uid_seg in user_ids:
+            try:
+                await bot.send_message(uid_seg, raw, parse_mode='HTML')
+                sent += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                failed += 1
+        await message.answer(f'✅ Отправлено: {sent}\n❌ Ошибки: {failed}', reply_markup=back_menu())
+        await audit(uid, 'broadcast', segment, f'sent={sent}, failed={failed}')
+
+    elif state == 'awaiting_ref_bonus':
+        try:
+            bonus = float(message.text.strip().replace(',', '.'))
+        except ValueError:
+            return await message.answer('Нужно число. Попробуй ещё:')
+        if bonus < 0 or bonus > 100000:
+            return await message.answer('Бонус 0-100000 ₽. Попробуй ещё:')
+        async with SessionLocal() as db:
+            cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
+            if cfg:
+                cfg.bonus_amount = bonus
+            else:
+                cfg = ReferralConfig(bonus_amount=bonus, active=True)
+                db.add(cfg)
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Бонус за реферала: {bonus:,.0f} ₽', reply_markup=back_menu())
+
+    elif state == 'awaiting_pickup_name':
+        _user_state[uid] = f'awaiting_pickup_addr:{message.text.strip()}'
+        await message.answer('📍 Адрес:', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_addr:'):
+        name = state.split(':', 1)[1]
+        _user_state[uid] = f'awaiting_pickup_hours:{name}:{message.text.strip()}'
+        await message.answer('⏰ Часы работы (или —):', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_hours:'):
+        parts = state.split(':', 2)
+        name, addr = parts[1], parts[2]
+        _user_state[uid] = f'awaiting_pickup_phone:{name}:{addr}:{message.text.strip()}'
+        await message.answer('☎️ Телефон (или —):', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_pickup_phone:'):
+        parts = state.split(':', 3)
+        name, addr, hours = parts[1], parts[2], parts[3]
+        phone = message.text.strip() if message.text.strip() != '—' else None
+        async with SessionLocal() as db:
+            db.add(PickupPoint(name=name, address=addr, work_hours=hours if hours != '—' else None, phone=phone))
+            await db.commit()
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Пункт «{name}» добавлен.', reply_markup=back_menu())
+
+    elif state.startswith('awaiting_chat_reply:'):
+        user_id = int(state.split(':')[1])
+        text = message.text.strip()
+        _user_state.pop(uid, None)
+        async with SessionLocal() as db:
+            session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
+            if session:
+                msg = ChatMessage(session_id=session.id, sender_id=uid, sender_role='admin', text=text)
+                db.add(msg)
+                session.last_message_at = datetime.now(timezone.utc)
+                await db.commit()
+        bot = get_shop_bot()
+        try:
+            await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
+        except Exception:
+            pass
+        await message.answer(f'✅ Ответ отправлен пользователю {user_id}.', reply_markup=back_menu())
+        await audit(uid, 'chat_reply', str(user_id), text[:100])
+
+    elif state == 'awaiting_template':
+        text = message.text.strip()
+        templates = _template_cache.get(uid, [])
+        templates.append(text)
+        _template_cache[uid] = templates
+        _user_state.pop(uid, None)
+        await message.answer(f'✅ Шаблон сохранён ({len(templates)} шт.).', reply_markup=back_menu())
+
+    elif state == 'awaiting_broadcast':
+        _user_state.pop(uid, None)
+        now = time.time()
+        last = _broadcast_last.get(uid, 0)
+        if now - last < 60:
+            return await message.answer(f'Подожди {int(60 - (now - last))}с перед следующим постом.', reply_markup=back_menu())
+        raw = message.text.strip()
+        if len(raw) > 4000:
+            return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
+        try:
+            bot = get_shop_bot()
+            if message.reply_to_message and message.reply_to_message.photo:
+                photo = message.reply_to_message.photo[-1].file_id
+                await bot.send_photo(settings.shop_channel_id, photo, caption=raw, parse_mode='HTML')
+            else:
+                await bot.send_message(settings.shop_channel_id, raw, parse_mode='HTML')
+            _broadcast_last[uid] = now
+            await message.answer('✅ Опубликовано в канал.', reply_markup=back_menu())
+        except Exception as e:
+            await message.answer(f'Ошибка: {e}', reply_markup=back_menu())
 
 # ── ФОТО ИЗ ЯНДЕКС ДИСКА ──
 
@@ -724,254 +963,6 @@ async def promo_type_selected(call: CallbackQuery):
     ])
     await call.message.edit_text(f'Код: <code>{code}</code>\nТип: {dtype}\n\nВведи значение скидки (число {label}):', parse_mode='HTML', reply_markup=kb)
     await call.answer()
-
-# ── ОБРАБОТКА ВВОДА (цена, остаток, доставка, промокоды, рассылка) ──
-
-@dp.message()
-async def text_input(message: Message):
-    if not allowed(message.from_user.id): return
-    if _is_forwarded(message): return
-    if message.photo or message.sticker: return
-    uid = message.from_user.id
-    state = _user_state.get(uid)
-    if not state: return
-
-    if state.startswith('awaiting_price:'):
-        pid = int(state.split(':')[1])
-        try:
-            price = float(message.text.strip().replace(',', '.'))
-        except ValueError:
-            return await message.answer('Нужно число. Попробуй ещё:')
-        if price < 100 or price > 500000:
-            return await message.answer('Цена 100-500000 ₽. Попробуй ещё:')
-        async with SessionLocal() as db:
-            p = await db.get(Product, pid)
-            if not p: 
-                _user_state.pop(uid, None)
-                return await message.answer('Товар не найден.')
-            old = float(p.sale_price)
-            p.sale_price = price
-            p.price_confidence = 1.0
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ #{pid} цена {old:,.0f} → {price:,.0f} ₽', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_stock:'):
-        pid = int(state.split(':')[1])
-        try:
-            num = int(message.text.strip())
-        except ValueError:
-            return await message.answer('Нужно целое число. Попробуй ещё:')
-        if num < 0 or num > 10000:
-            return await message.answer('Остаток 0-10000. Попробуй ещё:')
-        async with SessionLocal() as db:
-            p = await db.get(Product, pid)
-            if not p:
-                _user_state.pop(uid, None)
-                return await message.answer('Товар не найден.')
-            p.stock = num
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ #{pid} остаток → {num}', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_delivery:'):
-        oid = int(state.split(':')[1])
-        try:
-            cost = float(message.text.strip().replace(',', '.'))
-        except ValueError:
-            return await message.answer('Нужно число. Попробуй ещё:')
-        async with SessionLocal() as db:
-            o = await db.get(Order, oid)
-            if not o:
-                _user_state.pop(uid, None)
-                return await message.answer('Заказ не найден.')
-            o.delivery_cost = cost
-            o.total = float(o.subtotal) + cost
-            o.status = 'awaiting_payment'
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ Заказ #{oid}: доставка {cost:,.0f} ₽. Итого: {float(o.total):,.0f} ₽', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_tracking_number:'):
-        parts = state.split(':')
-        oid, carrier = int(parts[1]), parts[2]
-        tracking = message.text.strip()
-        if len(tracking) < 3:
-            return await message.answer('Трек-номер слишком короткий. Попробуй ещё:')
-        async with SessionLocal() as db:
-            shipment = Shipment(order_id=oid, carrier=carrier, tracking_number=tracking, status='registered')
-            db.add(shipment)
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ Трек-номер для #{oid}: {carrier} → {tracking}', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_tracking:'):
-        _user_state.pop(uid, None)
-        return
-
-    elif state.startswith('awaiting_promo_code'):
-        code = message.text.strip().upper()
-        if len(code) < 3 or len(code) > 20:
-            return await message.answer('Код 3-20 символов. Попробуй ещё:')
-        async with SessionLocal() as db:
-            exists = await db.scalar(select(PromoCode).where(PromoCode.code == code))
-        if exists:
-            return await message.answer('Такой код уже есть. Попробуй другой:')
-        _user_state[uid] = f'awaiting_promo_type:{code}'
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text='% Процент', callback_data=f'promotype:{code}:percent'),
-             InlineKeyboardButton(text='₽ Сумма', callback_data=f'promotype:{code}:fixed')],
-        ])
-        await message.answer(f'Код: <code>{code}</code>\nТип скидки:', parse_mode='HTML', reply_markup=kb)
-
-    elif state.startswith('awaiting_promo_value:'):
-        parts = state.split(':')
-        code, dtype = parts[1], parts[2]
-        try:
-            value = float(message.text.strip().replace(',', '.'))
-        except ValueError:
-            return await message.answer('Нужно число. Попробуй ещё:')
-        if value <= 0 or value > 100:
-            return await message.answer('Значение 0-100. Попробуй ещё:')
-        async with SessionLocal() as db:
-            promo = PromoCode(code=code, discount_type=dtype, discount_value=value, active=True)
-            db.add(promo)
-            await db.commit()
-        _user_state.pop(uid, None)
-        disc = f'{value}%' if dtype == 'percent' else f'{value:,.0f} ₽'
-        await message.answer(f'✅ Промокод <code>{code}</code> создан: {disc}', parse_mode='HTML', reply_markup=back_menu())
-        await audit(uid, 'promo_create', code, disc)
-
-    elif state.startswith('awaiting_promo_'):
-        _user_state.pop(uid, None)
-        return
-
-    elif state.startswith('awaiting_broadcast_segment:'):
-        segment = state.split(':')[1]
-        _user_state.pop(uid, None)
-        raw = message.text.strip()
-        if len(raw) > 4000:
-            return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
-        from datetime import datetime, timedelta
-        now_dt = datetime.now(timezone.utc)
-        week_ago = now_dt - timedelta(weeks=1)
-        async with SessionLocal() as db:
-            if segment == 'buyers':
-                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
-            elif segment == 'non_buyers':
-                all_users = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
-                recent = (await db.scalars(select(func.distinct(Order.telegram_user_id)).where(Order.created_at >= week_ago))).all()
-                user_ids = [u for u in all_users if u not in recent]
-            else:
-                user_ids = (await db.scalars(select(func.distinct(Order.telegram_user_id)))).all()
-        if not user_ids:
-            return await message.answer('Нет пользователей в этом сегменте.', reply_markup=back_menu())
-        bot = get_shop_bot()
-        sent, failed = 0, 0
-        for uid_seg in user_ids:
-            try:
-                await bot.send_message(uid_seg, raw, parse_mode='HTML')
-                sent += 1
-                await asyncio.sleep(0.05)
-            except Exception:
-                failed += 1
-
-        await message.answer(f'✅ Отправлено: {sent}\n❌ Ошибки: {failed}', reply_markup=back_menu())
-        await audit(uid, 'broadcast', segment, f'sent={sent}, failed={failed}')
-
-    elif state == 'awaiting_ref_bonus':
-        try:
-            bonus = float(message.text.strip().replace(',', '.'))
-        except ValueError:
-            return await message.answer('Нужно число. Попробуй ещё:')
-        if bonus < 0 or bonus > 100000:
-            return await message.answer('Бонус 0-100000 ₽. Попробуй ещё:')
-        async with SessionLocal() as db:
-            cfg = await db.scalar(select(ReferralConfig).where(ReferralConfig.active == True))
-            if cfg:
-                cfg.bonus_amount = bonus
-            else:
-                cfg = ReferralConfig(bonus_amount=bonus, active=True)
-                db.add(cfg)
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ Бонус за реферала: {bonus:,.0f} ₽', reply_markup=back_menu())
-
-    elif state == 'awaiting_pickup_name':
-        _user_state[uid] = f'awaiting_pickup_addr:{message.text.strip()}'
-        await message.answer('📍 Адрес:', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_pickup_addr:'):
-        name = state.split(':', 1)[1]
-        _user_state[uid] = f'awaiting_pickup_hours:{name}:{message.text.strip()}'
-        await message.answer('⏰ Часы работы (или —):', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_pickup_hours:'):
-        parts = state.split(':', 2)
-        name, addr = parts[1], parts[2]
-        _user_state[uid] = f'awaiting_pickup_phone:{name}:{addr}:{message.text.strip()}'
-        await message.answer('☎️ Телефон (или —):', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_pickup_phone:'):
-        parts = state.split(':', 3)
-        name, addr, hours = parts[1], parts[2], parts[3]
-        phone = message.text.strip() if message.text.strip() != '—' else None
-        async with SessionLocal() as db:
-            db.add(PickupPoint(name=name, address=addr, work_hours=hours if hours != '—' else None, phone=phone))
-            await db.commit()
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ Пункт «{name}» добавлен.', reply_markup=back_menu())
-
-    elif state.startswith('awaiting_chat_reply:'):
-        user_id = int(state.split(':')[1])
-        text = message.text.strip()
-        _user_state.pop(uid, None)
-        async with SessionLocal() as db:
-            session = await db.scalar(select(ChatSession).where(ChatSession.user_id == user_id))
-            if session:
-                msg = ChatMessage(session_id=session.id, sender_id=uid, sender_role='admin', text=text)
-                db.add(msg)
-                session.last_message_at = datetime.now(timezone.utc)
-                await db.commit()
-        from aiogram import Bot
-        bot = get_shop_bot()
-        try:
-            await bot.send_message(user_id, f'👨‍💼 <b>Ответ поддержки:</b>\n\n{text}', parse_mode='HTML')
-        except Exception:
-            pass
-
-        await message.answer(f'✅ Ответ отправлен пользователю {user_id}.', reply_markup=back_menu())
-        await audit(uid, 'chat_reply', str(user_id), text[:100])
-
-    elif state == 'awaiting_template':
-        text = message.text.strip()
-        templates = _template_cache.get(uid, [])
-        templates.append(text)
-        _template_cache[uid] = templates
-        _user_state.pop(uid, None)
-        await message.answer(f'✅ Шаблон сохранён ({len(templates)} шт.).', reply_markup=back_menu())
-
-    elif state == 'awaiting_broadcast':
-        _user_state.pop(uid, None)
-        now = time.time()
-        last = _broadcast_last.get(uid, 0)
-        if now - last < 60:
-            return await message.answer(f'Подожди {int(60 - (now - last))}с перед следующим постом.', reply_markup=back_menu())
-        raw = message.text.strip()
-        if len(raw) > 4000:
-            return await message.answer('Текст слишком длинный (макс 4000).', reply_markup=back_menu())
-        try:
-            bot = get_shop_bot()
-            if message.reply_to_message and message.reply_to_message.photo:
-                photo = message.reply_to_message.photo[-1].file_id
-                await bot.send_photo(settings.shop_channel_id, photo, caption=raw, parse_mode='HTML')
-            else:
-                await bot.send_message(settings.shop_channel_id, raw, parse_mode='HTML')
-    
-            _broadcast_last[uid] = now
-            await message.answer('✅ Опубликовано в канал.', reply_markup=back_menu())
-        except Exception as e:
-            await message.answer(f'Ошибка: {e}', reply_markup=back_menu())
 
 # ── ЗАКАЗЫ ──
 
