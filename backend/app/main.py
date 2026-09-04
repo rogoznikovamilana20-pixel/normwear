@@ -918,10 +918,10 @@ async def publish_to_channel(product_id: int, request: Request):
         from .publisher import ChannelPublisher
         pub = ChannelPublisher()
         media = json.loads(p.media_json)
-        http_urls = [m for m in media if m.startswith('http')]
-        if not http_urls:
-            raise HTTPException(400, 'No CDN photos')
-        msg_id = await pub.publish(p, http_urls[:6])
+        urls = [m for m in media if m][:6]
+        if not urls:
+            raise HTTPException(400, 'No media')
+        msg_id = await pub.publish(p, urls)
         async with SessionLocal() as db:
             p.channel_message_id = msg_id
             await db.commit()

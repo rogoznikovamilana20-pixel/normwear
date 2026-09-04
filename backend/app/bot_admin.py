@@ -237,9 +237,7 @@ async def mod_approve_publish(call: CallbackQuery):
         async with SessionLocal() as db:
             p = await db.get(Product, pid)
             media = json.loads(p.media_json) if p.media_json else []
-            http_urls = [m for m in media if m.startswith('http')]
-            local_paths = [m for m in media if not m.startswith('http')]
-            urls = http_urls[:6] if http_urls else local_paths[:6]
+            urls = [m for m in media if m][:6]
             if not urls:
                 await call.message.edit_text('❌ Нет фото для публикации', reply_markup=back_menu())
                 return
