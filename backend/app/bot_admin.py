@@ -730,6 +730,8 @@ async def promo_type_selected(call: CallbackQuery):
 @dp.message()
 async def text_input(message: Message):
     if not allowed(message.from_user.id): return
+    if _is_forwarded(message): return
+    if message.photo or message.sticker: return
     uid = message.from_user.id
     state = _user_state.get(uid)
     if not state: return
