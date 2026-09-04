@@ -474,6 +474,10 @@ def _get_brand_photos(brand: str, category: str = None) -> list[dict]:
     if not idx:
         return []
     photos = []
+    # Category mapping - skip categories not on disk
+    NO_PHOTO_CATS = {'Шорты', 'Штаны', 'Джинсы'}
+    if category and category in NO_PHOTO_CATS:
+        return []
     for cat_key, cat_brands in idx.get('categories', {}).items():
         if brand in cat_brands:
             photos.extend(cat_brands[brand]['photos'])
