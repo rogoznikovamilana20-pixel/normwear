@@ -375,6 +375,9 @@ async def mod_edit_cat(call: CallbackQuery):
 async def moderation_text_input(message: Message):
     if not allowed(message.from_user.id): return
 
+    if _is_forwarded(message):
+        return await _handle_forwarded_message(message)
+
     if _user_state.get(message.from_user.id) == 'fwd_edit':
         for fwd_id, state in _forward_state.items():
             editing = state.get('_editing')
@@ -1842,156 +1845,171 @@ def _get_fwd_data(fwd_id: str) -> dict | None:
 
 async def _process_forwarded_media_group(chat_id: int, grouped_id: int):
     """Called after delay to process buffered media group."""
-    key = (chat_id, grouped_id)
-    messages = _media_buffer.pop(key, [])
-    _media_timers.pop(key, None)
-    if not messages:
-        return
-    messages.sort(key=lambda m: m.message_id)
+    try:
+        key = (chat_id, grouped_id)
+        messages = _media_buffer.pop(key, [])
+        _media_timers.pop(key, None)
+        if not messages:
+            return
+        messages.sort(key=lambda m: m.message_id)
 
-    text_msg = next((m for m in messages if m.caption and m.forward_origin), messages[0])
-    origin = text_msg.forward_origin
-    fwd_chat_title = ''
-    fwd_msg_id = None
-    if isinstance(origin, MessageOriginChannel):
-        fwd_chat_title = origin.chat.title if origin.chat else ''
-        fwd_msg_id = origin.message_id
-    elif isinstance(origin, MessageOriginChat):
-        fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
-    elif isinstance(origin, MessageOriginUser):
-        fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
+        text_msg = next((m for m in messages if m.caption and _is_forwarded(m)), messages[0])
+        origin = getattr(text_msg, 'forward_origin', None)
+        fwd_chat_title = ''
+        fwd_msg_id = None
+        if origin:
+            if isinstance(origin, MessageOriginChannel):
+                fwd_chat_title = origin.chat.title if origin.chat else ''
+                fwd_msg_id = origin.message_id
+            elif isinstance(origin, MessageOriginChat):
+                fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
+            elif isinstance(origin, MessageOriginUser):
+                fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
 
-    raw_text = text_msg.caption or text_msg.text or ''
-    photo_ids = []
-    for m in messages:
-        if m.photo:
-            photo_ids.append(m.photo[-1].file_id)
+        raw_text = text_msg.caption or text_msg.text or ''
+        photo_ids = []
+        for m in messages:
+            if m.photo:
+                photo_ids.append(m.photo[-1].file_id)
 
-    from .parser import parse_product, ParsedProduct
-    parsed = parse_product(raw_text)
+        from .parser import parse_product, ParsedProduct
+        parsed = parse_product(raw_text)
 
-    if not parsed:
-        parsed = ParsedProduct(
-            title=raw_text[:100] if raw_text else 'Товар',
-            purchase_price=0,
-            sizes=[],
-            description=raw_text,
-            brand=None,
-            category='Другое',
-            stock=1,
-        )
+        if not parsed:
+            parsed = ParsedProduct(
+                title=raw_text[:100] if raw_text else 'Товар',
+                purchase_price=0,
+                sizes=[],
+                description=raw_text,
+                brand=None,
+                category='Другое',
+                stock=1,
+            )
 
-    sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
-    fwd_id = _gen_fwd_id()
+        sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
+        fwd_id = _gen_fwd_id()
 
-    _forward_state[fwd_id] = {
-        'text': raw_text,
-        'photo_ids': photo_ids,
-        'parsed': parsed,
-        'sale_price': sale_price,
-        'fwd_chat_title': fwd_chat_title,
-        'fwd_msg_id': fwd_msg_id,
-        'edits': {},
-    }
+        _forward_state[fwd_id] = {
+            'text': raw_text,
+            'photo_ids': photo_ids,
+            'parsed': parsed,
+            'sale_price': sale_price,
+            'fwd_chat_title': fwd_chat_title,
+            'fwd_msg_id': fwd_msg_id,
+            'edits': {},
+        }
 
-    caption = _build_forward_caption(parsed, sale_price)
-    kb = _forward_preview_kb(fwd_id)
+        caption = _build_forward_caption(parsed, sale_price)
+        kb = _forward_preview_kb(fwd_id)
 
-    bot = get_admin_bot()
-    if photo_ids:
-        try:
-            if len(photo_ids) == 1:
-                await bot.send_photo(chat_id, photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
-            else:
-                from aiogram.types import InputMediaPhoto
-                group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
-                for pid in photo_ids[1:9]:
-                    group.append(InputMediaPhoto(media=pid))
-                await bot.send_media_group(chat_id, group)
-                await bot.send_message(chat_id, '⬆️ Превью поста. Выбери действие:', reply_markup=kb)
-        except Exception as e:
-            await bot.send_message(chat_id, f'⚠️ Ошибка отправки: {e}\n\n<b>Текст поста:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
-    else:
-        await bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=kb)
+        bot = get_admin_bot()
+        if photo_ids:
+            try:
+                if len(photo_ids) == 1:
+                    await bot.send_photo(chat_id, photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
+                else:
+                    from aiogram.types import InputMediaPhoto
+                    group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
+                    for pid in photo_ids[1:9]:
+                        group.append(InputMediaPhoto(media=pid))
+                    await bot.send_media_group(chat_id, group)
+                    await bot.send_message(chat_id, '⬆️ Превью поста. Выбери действие:', reply_markup=kb)
+            except Exception as e:
+                await bot.send_message(chat_id, f'⚠️ Ошибка отправки: {e}\n\n<b>Текст поста:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
+        else:
+            await bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=kb)
+    except Exception as e:
+        import traceback
+        print(f'[FWD MEDIA GROUP ERROR] {e}\n{traceback.format_exc()}', flush=True)
 
 async def _handle_forwarded_message(message: Message):
     """Handle a single forwarded message (non-album or first in album)."""
     if not allowed(message.from_user.id):
         return
 
-    grouped_id = message.grouped_id
-    if grouped_id:
-        key = (message.chat.id, grouped_id)
-        _media_buffer.setdefault(key, []).append(message)
-        if key in _media_timers:
-            _media_timers[key].cancel()
-        _media_timers[key] = asyncio.create_task(
-            _process_forwarded_media_group(message.chat.id, grouped_id),
-            name=f'fwd_media_{grouped_id}'
-        )
-        return
+    try:
+        grouped_id = message.grouped_id
+        if grouped_id:
+            key = (message.chat.id, grouped_id)
+            _media_buffer.setdefault(key, []).append(message)
+            if key in _media_timers:
+                _media_timers[key].cancel()
+            _media_timers[key] = asyncio.create_task(
+                _process_forwarded_media_group(message.chat.id, grouped_id),
+                name=f'fwd_media_{grouped_id}'
+            )
+            return
 
-    origin = message.forward_origin
-    fwd_chat_title = ''
-    fwd_msg_id = None
-    if isinstance(origin, MessageOriginChannel):
-        fwd_chat_title = origin.chat.title if origin.chat else ''
-        fwd_msg_id = origin.message_id
-    elif isinstance(origin, MessageOriginChat):
-        fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
-    elif isinstance(origin, MessageOriginUser):
-        fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
+        origin = getattr(message, 'forward_origin', None)
+        fwd_chat_title = ''
+        fwd_msg_id = None
+        if origin:
+            if isinstance(origin, MessageOriginChannel):
+                fwd_chat_title = origin.chat.title if origin.chat else ''
+                fwd_msg_id = origin.message_id
+            elif isinstance(origin, MessageOriginChat):
+                fwd_chat_title = origin.sender_chat.title if origin.sender_chat else ''
+            elif isinstance(origin, MessageOriginUser):
+                fwd_chat_title = origin.sender_user.full_name if origin.sender_user else ''
 
-    raw_text = message.caption or message.text or ''
-    photo_ids = []
-    if message.photo:
-        photo_ids.append(message.photo[-1].file_id)
+        raw_text = message.caption or message.text or ''
+        photo_ids = []
+        if message.photo:
+            photo_ids.append(message.photo[-1].file_id)
 
-    from .parser import parse_product, ParsedProduct
-    parsed = parse_product(raw_text)
+        from .parser import parse_product, ParsedProduct
+        parsed = parse_product(raw_text)
 
-    if not parsed:
-        parsed = ParsedProduct(
-            title=raw_text[:100] if raw_text else 'Товар',
-            purchase_price=0,
-            sizes=[],
-            description=raw_text,
-            brand=None,
-            category='Другое',
-            stock=1,
-        )
+        if not parsed:
+            parsed = ParsedProduct(
+                title=raw_text[:100] if raw_text else 'Товар',
+                purchase_price=0,
+                sizes=[],
+                description=raw_text,
+                brand=None,
+                category='Другое',
+                stock=1,
+            )
 
-    sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
-    fwd_id = _gen_fwd_id()
+        sale_price = round(parsed.purchase_price * (1 + settings.default_margin_pct / 100)) if parsed.purchase_price > 0 else 0
+        fwd_id = _gen_fwd_id()
 
-    _forward_state[fwd_id] = {
-        'text': raw_text,
-        'photo_ids': photo_ids,
-        'parsed': parsed,
-        'sale_price': sale_price,
-        'fwd_chat_title': fwd_chat_title,
-        'fwd_msg_id': fwd_msg_id,
-        'edits': {},
-    }
+        _forward_state[fwd_id] = {
+            'text': raw_text,
+            'photo_ids': photo_ids,
+            'parsed': parsed,
+            'sale_price': sale_price,
+            'fwd_chat_title': fwd_chat_title,
+            'fwd_msg_id': fwd_msg_id,
+            'edits': {},
+        }
 
-    caption = _build_forward_caption(parsed, sale_price)
-    kb = _forward_preview_kb(fwd_id)
+        caption = _build_forward_caption(parsed, sale_price)
+        kb = _forward_preview_kb(fwd_id)
 
-    if photo_ids:
+        if photo_ids:
+            try:
+                if len(photo_ids) == 1:
+                    await message.answer_photo(photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
+                else:
+                    from aiogram.types import InputMediaPhoto
+                    group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
+                    for pid in photo_ids[1:9]:
+                        group.append(InputMediaPhoto(media=pid))
+                    await message.answer_media_group(group)
+                    await message.answer('⬆️ Превью поста. Выбери действие:', reply_markup=kb)
+            except Exception as e:
+                await message.answer(f'⚠️ Ошибка: {e}\n\n<b>Текст:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
+        else:
+            await message.answer(caption, parse_mode='HTML', reply_markup=kb)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f'[FORWARD ERROR] {e}\n{tb}', flush=True)
         try:
-            if len(photo_ids) == 1:
-                await message.answer_photo(photo_ids[0], caption=caption, parse_mode='HTML', reply_markup=kb)
-            else:
-                from aiogram.types import InputMediaPhoto
-                group = [InputMediaPhoto(media=photo_ids[0], caption=caption, parse_mode='HTML')]
-                for pid in photo_ids[1:9]:
-                    group.append(InputMediaPhoto(media=pid))
-                await message.answer_media_group(group)
-                await message.answer('⬆️ Превью поста. Выбери действие:', reply_markup=kb)
-        except Exception as e:
-            await message.answer(f'⚠️ Ошибка: {e}\n\n<b>Текст:</b>\n{caption[:500]}', parse_mode='HTML', reply_markup=kb)
-    else:
-        await message.answer(caption, parse_mode='HTML', reply_markup=kb)
+            await message.answer(f'❌ Ошибка обработки пересылки: {e}', reply_markup=back_menu())
+        except Exception:
+            pass
 
 @dp.message(F.forward_origin)
 async def on_forwarded(message: Message):
@@ -2261,10 +2279,19 @@ async def fwd_cancel(call: CallbackQuery):
 
 # ── ФОТО / СТИКЕРЫ ──
 
+def _is_forwarded(message: Message) -> bool:
+    """Check if message is forwarded from any source."""
+    return bool(
+        getattr(message, 'forward_origin', None)
+        or getattr(message, 'forward_from_chat', None)
+        or getattr(message, 'forward_from', None)
+        or getattr(message, 'forward_date', None)
+    )
+
 @dp.message(F.sticker | F.photo)
 async def on_media(message: Message):
     if not allowed(message.from_user.id): return
-    if message.forward_origin:
+    if _is_forwarded(message):
         return await _handle_forwarded_message(message)
     if message.photo and message.reply_to_message:
         return
