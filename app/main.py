@@ -1,0 +1,145 @@
+import asyncio
+import logging
+import sys
+
+import uvicorn
+from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
+
+from app.services import notify
+from app.api import create_app
+from app.bots import admin as admin_module
+from app.bots import shop as shop_module
+from app.config import BASE_DIR, get_settings
+from app.db import SessionMaker, init_db
+from app.services.photos import yandex_library
+from app.services.seed import seed_basic
+
+settings = get_settings()
+
+# гарантируем наличие папки логов (в Docker её нет)
+(BASE_DIR / "logs").mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(BASE_DIR / "logs" / "app.log", encoding="utf-8"),
+    ],
+)
+log = logging.getLogger("main")
+
+SHOP_COMMANDS = [BotCommand(command="start", description="Магазин NORMWEAR")]
+ADMIN_COMMANDS = [
+    BotCommand(command="admin", description="Панель управления"),
+    BotCommand(command="orders", description="Активные заказы"),
+    BotCommand(command="promo", description="Создать промокод"),
+]
+
+
+async def run_all() -> None:
+    await init_db()
+    brands_loaded = yandex_library.load()
+    log.info("Yandex library loaded: %s brands", brands_loaded)
+    async with SessionMaker() as s:
+        await seed_basic(s)
+        log.info("Seed done")
+
+    shop = Bot(settings.shop_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    admin = Bot(settings.admin_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    notify.shop_bot = shop
+    notify.admin_bot = admin
+    admin_module.known_brands = set(yandex_library.brand_titles)
+
+    # Redis для FSM если доступен, иначе MemoryStorage (для бесплатного тарифа ок)
+    storage_shop = MemoryStorage()
+    storage_admin = MemoryStorage()
+    if settings.redis_url:
+        try:
+            from aiogram.fsm.storage.redis import RedisStorage
+            from redis.asyncio import Redis
+
+            redis = Redis.from_url(settings.redis_url, decode_responses=False)
+            await redis.ping()
+            storage_shop = RedisStorage(redis)
+            storage_admin = RedisStorage(redis)
+            log.info("Redis FSM enabled: %s", settings.redis_url.split("@")[-1])
+        except Exception as e:
+            log.warning("Redis unavailable, fallback to MemoryStorage: %s", e)
+
+    d_shop = Dispatcher(storage=storage_shop)
+    d_admin = Dispatcher(storage=storage_admin)
+    d_shop.include_router(shop_module.router)
+    d_admin.include_router(admin_module.router)
+
+    app = create_app()
+    port = settings.effective_port
+    log.info("Starting web on 0.0.0.0:%s (env=%s)", port, settings.app_env)
+    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info"))
+    tasks = [asyncio.create_task(server.serve())]
+    if not settings.run_bots:
+        log.info("RUN_BOTS=false: web only")
+    elif not settings.shop_bot_token or not settings.admin_bot_token:
+        log.warning("BOT TOKENS пустые — боты не запустятся, только веб")
+    else:
+        # set_my_commands с таймаутом 5с — не вешаем старт веба
+        try:
+            await asyncio.wait_for(shop.set_my_commands(SHOP_COMMANDS), timeout=5)
+        except Exception as e:
+            log.warning("shop set_my_commands failed: %s", e)
+        try:
+            await asyncio.wait_for(admin.set_my_commands(ADMIN_COMMANDS), timeout=5)
+        except Exception as e:
+            log.warning("admin set_my_commands failed: %s", e)
+        try:
+            me = await asyncio.wait_for(shop.get_me(), timeout=5)
+            log.info("Shop bot polling as @%s", me.username)
+        except Exception as e:
+            log.error("Shop bot get_me failed: %s", e)
+        try:
+            me2 = await asyncio.wait_for(admin.get_me(), timeout=5)
+            log.info("Admin bot polling as @%s", me2.username)
+        except Exception as e:
+            log.error("Admin bot get_me failed: %s", e)
+        tasks.append(asyncio.create_task(d_shop.start_polling(shop, handle_signals=False)))
+        tasks.append(asyncio.create_task(d_admin.start_polling(admin, handle_signals=False)))
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        # корректно закрываем httpx клиент Я.Диска
+        try:
+            await yandex_library.aclose()
+        except Exception:
+            pass
+        try:
+            await shop.session.close()
+        except Exception:
+            pass
+        try:
+            await admin.session.close()
+        except Exception:
+            pass
+
+
+def check() -> None:
+    asyncio.run(init_db())
+    yandex_library.load()
+    app = create_app()
+    print("check ok: routes =", len(app.routes))
+    from app.services.parser import parse_product
+
+    parsed = parse_product("Nike Dunk Low\nРазмеры: 40 41 42 43\nЦена: 7500 руб\nВ наличии: 3 шт")
+    assert parsed is not None and parsed.supplier_price == 7500 and parsed.brand == "Nike", parsed
+    print("parser ok:", parsed.title, parsed.supplier_price, parsed.brand, parsed.sizes)
+
+
+if __name__ == "__main__":
+    if "--check" in sys.argv:
+        check()
+    else:
+        asyncio.run(run_all())

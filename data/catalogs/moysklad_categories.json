@@ -1,0 +1,898 @@
+[
+  {
+    "id": "5b508dcc-9567-11f0-0a80-0df4001207e1",
+    "name": "Джерси",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "6350ac95-9567-11f0-0a80-19dd00125cb8",
+    "name": "Supreme",
+    "pathName": "Джерси",
+    "parentId": "5b508dcc-9567-11f0-0a80-0df4001207e1",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c01e3b71-bbee-11f0-0a80-16ad001221a1",
+    "name": "Зипки",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "a631ce4a-0737-11f1-0a80-0f16000b9684",
+    "name": "Индивидуальные заказы",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "name": "Лонгсливы",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "c2c4e466-9654-11f0-0a80-0159001d3147",
+    "name": "Acne Studios",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4426edf6-a9d7-11f0-0a80-059800284d95",
+    "name": "Bape",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "2a49d195-9654-11f0-0a80-0844001cee3c",
+    "name": "Bape x Mastermind",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "7610fae7-26ac-11f1-0a80-042500309e59",
+    "name": "Chrome Hearts",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "0721ede1-b998-11f0-0a80-01af0031e6ea",
+    "name": "Comme des Fuckdown",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "83ac8ae0-9654-11f0-0a80-16d9001d8861",
+    "name": "Comme des Garcons",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "75227933-9655-11f0-0a80-0df4001d4c8e",
+    "name": "Corteiz",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1df1092e-9656-11f0-0a80-0f42001d5524",
+    "name": "Denim Tears",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "b024dd51-9655-11f0-0a80-0df4001d4d4b",
+    "name": "ERD",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "616eb97d-4e2e-11f1-0a80-06380000f8e1",
+    "name": "Givenchy",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "217e9350-26ac-11f1-0a80-042500308f22",
+    "name": "Gucci",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "8ade58de-3a5f-11f1-0a80-17d1000f9f7d",
+    "name": "Hysteric Glamour",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "81d07925-67f0-11f1-0a80-1efc002f344d",
+    "name": "Kenzo",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "6d81310e-a9d6-11f0-0a80-0fdb00286f5c",
+    "name": "Maison Margiela",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "e7d35eee-f7c7-11f0-0a80-03f400012536",
+    "name": "Marcelo Burlon",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1ab8713d-050b-11f1-0a80-1af600247f9e",
+    "name": "Martine Rose",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4ad7f3e8-b986-11f0-0a80-0baf002fdde2",
+    "name": "Mastermind",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1deda49b-4c65-11f1-0a80-0423003465f7",
+    "name": "Saint Laurent",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1711c6db-9655-11f0-0a80-0729001de0c0",
+    "name": "Supreme",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "3c023d20-af33-11f0-0a80-0ef2000c180f",
+    "name": "Valentino",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "d51bf769-050a-11f1-0a80-09c90025507e",
+    "name": "Vetements",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "66a4f54c-9653-11f0-0a80-19dd001d6026",
+    "name": "Y-3",
+    "pathName": "Лонгсливы",
+    "parentId": "6a177536-9650-11f0-0a80-058c001d1d86",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "bdf13605-5abe-11f1-0a80-07f900153f6a",
+    "name": "Майки",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "708162db-5abf-11f1-0a80-1aef00003ba0",
+    "name": "BAPE",
+    "pathName": "Майки",
+    "parentId": "bdf13605-5abe-11f1-0a80-07f900153f6a",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1c0b3360-9586-11f0-0a80-16d9001473b8",
+    "name": "Олимпийка",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "24976c23-9586-11f0-0a80-0df400140457",
+    "name": "Jordan",
+    "pathName": "Олимпийка",
+    "parentId": "1c0b3360-9586-11f0-0a80-16d9001473b8",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "63f65991-9650-11f0-0a80-187f001dce56",
+    "name": "Поло",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "bd0aea1d-9652-11f0-0a80-16d9001d8253",
+    "name": "Ami Paris",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "aac82700-9650-11f0-0a80-0df4001d377d",
+    "name": "Bape",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "09e5ee79-9652-11f0-0a80-0efd001d743e",
+    "name": "Comme des Garcons",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "e8d3fb4b-26ad-11f1-0a80-16c90030cc8f",
+    "name": "Corteiz",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "3bd56bc7-c9f1-11f0-0a80-186a000e3495",
+    "name": "Fred Perry",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "bbff4514-26ad-11f1-0a80-0f3f00303067",
+    "name": "Gucci",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "1881e1ee-9653-11f0-0a80-1bbe001c728b",
+    "name": "Not From Paris Madame",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "2821268f-9569-11f0-0a80-0cc60011b2d5",
+    "name": "Polo Ralph Lauren",
+    "pathName": "Поло",
+    "parentId": "63f65991-9650-11f0-0a80-187f001dce56",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "name": "Полузамок",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "288db886-c603-11f0-0a80-175b000cd05e",
+    "name": "BAPE",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4d53b640-cb9d-11f0-0a80-13d10010c298",
+    "name": "CDG",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "d84b1ee2-cb9c-11f0-0a80-14020012362a",
+    "name": "Fred Perry",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "fab533fd-c602-11f0-0a80-00ad000d545c",
+    "name": "Polo Ralph Lauren",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "68f90767-cb9c-11f0-0a80-064c0011e99d",
+    "name": "Valentino",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "a93b9fce-cb9d-11f0-0a80-037600121555",
+    "name": "Yohji Yamamoto",
+    "pathName": "Полузамок",
+    "parentId": "f2148501-c602-11f0-0a80-16d8000d8afb",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "32ba6951-9585-11f0-0a80-19dd001419c3",
+    "name": "Свитер",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "36dd4ca9-9585-11f0-0a80-19dd001419ce",
+    "name": "Supreme",
+    "pathName": "Свитер",
+    "parentId": "32ba6951-9585-11f0-0a80-19dd001419c3",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "name": "Свитшот",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "24940f54-957a-11f0-0a80-058c00131e59",
+    "name": "Ami",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "7286962f-9578-11f0-0a80-187f0014343c",
+    "name": "Arc’teryx",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "fcd501da-a9d0-11f0-0a80-0d3300286a2c",
+    "name": "Bape",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "40bbaa2d-050a-11f1-0a80-00d500253aa3",
+    "name": "Burberry",
+    "pathName": "Свитшот/Bape",
+    "parentId": "fcd501da-a9d0-11f0-0a80-0d3300286a2c",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c571acf5-050f-11f1-0a80-15910024707b",
+    "name": "Burberry",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "9cd5a70a-a9d5-11f0-0a80-1bc300288f3e",
+    "name": "ERD",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "a034ffdc-26ac-11f1-0a80-131b002f969f",
+    "name": "Gucci",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "73344b80-8152-11f1-0a80-0eee00017d07",
+    "name": "Kenzo",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c78734e3-a9d4-11f0-0a80-1cc200285140",
+    "name": "Mastermind",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "66b3a5f3-050b-11f1-0a80-1591002446ac",
+    "name": "Palace x Gap",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "27629325-9579-11f0-0a80-143500136847",
+    "name": "Polo Ralph Lauren",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "3b81ec78-a9d5-11f0-0a80-0d3300291b41",
+    "name": "Y-3",
+    "pathName": "Свитшот",
+    "parentId": "e8c0d690-a9d0-11f0-0a80-1cc20027ab09",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "name": "Футболки",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "4836e192-496b-11f1-0a80-0145002a81a7",
+    "name": "Acme de la vie",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "2ce82dfc-965c-11f0-0a80-090b001c2a97",
+    "name": "Acne Studios",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "946dfa5f-965b-11f0-0a80-17d5001db11f",
+    "name": "Ami Paris",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "84e67c72-965e-11f0-0a80-0df4001d6a57",
+    "name": "Balenciaga",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c61da06f-965a-11f0-0a80-0efd001da4fc",
+    "name": "BAPE",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "57bfaf31-67ef-11f1-0a80-0fd5003092c9",
+    "name": "Calvin Klein",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "08f0154f-9568-11f0-0a80-19dd00126e6a",
+    "name": "Chrome Heart",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "f84505eb-965d-11f0-0a80-1bbe001ca66a",
+    "name": "Comme des Fuckdown",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "06d5976b-9654-11f0-0a80-0729001ddc4c",
+    "name": "Comme des Garcons",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "6868716b-9651-11f0-0a80-16d9001d778c",
+    "name": "Corteiz",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "6e31db80-956b-11f0-0a80-0f4200123be9",
+    "name": "Denim Tears",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "ff0ff72d-f7c1-11f0-0a80-1b2e0000ebe8",
+    "name": "Denim Tears",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "a565f08b-965d-11f0-0a80-0f42001d6f12",
+    "name": "ERD",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "bb8d66f6-965a-11f0-0a80-090b001c2680",
+    "name": "Essentials",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "92730cea-77d8-11f1-0a80-19c8001bae68",
+    "name": "Givenchy",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "f42afec8-61ab-11f1-0a80-10f0001c4c6f",
+    "name": "Gucci",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "22eb3885-6c9e-11f1-0a80-02f3001a38b1",
+    "name": "Guess",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "af004d4f-9565-11f0-0a80-0cc600114c13",
+    "name": "Jordan",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "152fbbbf-67ef-11f1-0a80-15fd002fc665",
+    "name": "Kenzo",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "7809bde0-9566-11f0-0a80-00660011e03f",
+    "name": "Lacoste",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c65b1b25-67ef-11f1-0a80-096200304963",
+    "name": "Levis",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "735b45ef-6eee-11f1-0a80-14fc0045cd88",
+    "name": "LV",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "65d2bc08-9657-11f0-0a80-090b001c1a47",
+    "name": "Maison Margiela",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "618dd0d8-af60-11f0-0a80-10db00143d98",
+    "name": "Maison Mihara",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "5f30a921-965c-11f0-0a80-0066001d5526",
+    "name": "Marcelo Burlon",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "93956c34-6b0c-11f1-0a80-1a5900239a9f",
+    "name": "Martine Rose",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "a30ed6c2-9657-11f0-0a80-058c001d390f",
+    "name": "Mastermind",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "149023a2-965f-11f0-0a80-0844001d2abe",
+    "name": "NEIGHBORHOOD",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "33f863d0-9658-11f0-0a80-0066001d4466",
+    "name": "Nike",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "6df99785-67ee-11f1-0a80-045b002f1278",
+    "name": "Oakley",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "45c5507b-965f-11f0-0a80-090b001c33b1",
+    "name": "Palace",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "85e16dae-814c-11f1-0a80-1e67000184b4",
+    "name": "Palm Angels",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "fd4289c4-77d8-11f1-0a80-1dbb001bf079",
+    "name": "Philip Plein",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "11108fad-9565-11f0-0a80-00660011a778",
+    "name": "Polo Ralph Lauren",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "ed8f946b-965b-11f0-0a80-0f42001d6b3c",
+    "name": "Polo Ralph Lauren",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "7d13c980-61a8-11f1-0a80-1a45001afe5b",
+    "name": "Rick Owens",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "94aab3bb-4969-11f1-0a80-00ca002b4a3f",
+    "name": "Saint Laurent",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "23fc8710-965a-11f0-0a80-0cc6001d4eeb",
+    "name": "Stussy",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "112bd0fb-965e-11f0-0a80-0cc6001d5ca3",
+    "name": "Supreme",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "01819c1b-965b-11f0-0a80-0f42001d66ff",
+    "name": "Syna World",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "7665f907-955d-11f0-0a80-084400107d4d",
+    "name": "Tupac Shakur 2pac",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "e5f69df1-6eeb-11f1-0a80-01fb00457b3f",
+    "name": "Valentino",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "9b244de3-7002-11f1-0a80-04a60000fb43",
+    "name": "Versace",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "20fe38e2-965d-11f0-0a80-187f001e1740",
+    "name": "Vetements",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "bef702b5-965c-11f0-0a80-17d5001db421",
+    "name": "Y-3",
+    "pathName": "Футболки",
+    "parentId": "4fcde43d-9650-11f0-0a80-19dd001d50e7",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "name": "Худи",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "0a4047a8-d75b-11f0-0a80-1815000e95f7",
+    "name": "Acme de la Vie",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "22cea38e-f7c1-11f0-0a80-03f40000ee6a",
+    "name": "ALYX",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "c238813e-c602-11f0-0a80-07d9000d1969",
+    "name": "Balenciaga",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "b8e0d4e1-d99b-11f0-0a80-1037002fb840",
+    "name": "Comme des Garcons",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4938aeda-3a5e-11f1-0a80-0933000f1625",
+    "name": "Corteiz",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "9383234a-f7c0-11f0-0a80-10950000f5ea",
+    "name": "Denim Tears",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "9a9c4696-c9f1-11f0-0a80-14ca000e4b59",
+    "name": "Givencshy",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "27b32281-26ad-11f1-0a80-131b002fb2c8",
+    "name": "Gucci",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "5b01134f-f7c1-11f0-0a80-03f40000efd3",
+    "name": "Marcelo Burlon",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "fbfe5f43-050d-11f1-0a80-0bc20025d93d",
+    "name": "Mastermind",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "3e17aa09-a9da-11f0-0a80-15eb00291c33",
+    "name": "Off-white",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "70f91f67-26ad-11f1-0a80-1ac2002f12e9",
+    "name": "Philipp Plein",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "ec850931-f7c0-11f0-0a80-15080000d742",
+    "name": "Supreme",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "b6b14fc8-c601-11f0-0a80-05ed000df564",
+    "name": "Undercover",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "3d5025c4-050e-11f1-0a80-078e00261c23",
+    "name": "Vetements",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "4d9d7a61-c602-11f0-0a80-14bf000cd564",
+    "name": "Yohji Yamamoto Y-3",
+    "pathName": "Худи",
+    "parentId": "eff893c2-a9d0-11f0-0a80-0fdb0027a838",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "e440d251-9586-11f0-0a80-0efd00142d3c",
+    "name": "Штаны",
+    "pathName": "",
+    "parentId": "",
+    "isWithSubcategory": true
+  },
+  {
+    "id": "c33a67d8-9588-11f0-0a80-19dd00142e70",
+    "name": "Nike",
+    "pathName": "Штаны",
+    "parentId": "e440d251-9586-11f0-0a80-0efd00142d3c",
+    "isWithSubcategory": false
+  },
+  {
+    "id": "f720ffe3-9587-11f0-0a80-058c0013dcf2",
+    "name": "Черные псы",
+    "pathName": "Штаны",
+    "parentId": "e440d251-9586-11f0-0a80-0efd00142d3c",
+    "isWithSubcategory": false
+  }
+]
