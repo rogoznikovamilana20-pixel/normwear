@@ -30,7 +30,7 @@ services:
       - key: YANDEX_PUBLIC_KEY
         value: https://disk.yandex.ru/d/e4YGRLhebhBoVA
       - key: RUN_BOTS
-        value: "true"
+        value: "false"
 databases:
   - name: normwear-db
     plan: free
