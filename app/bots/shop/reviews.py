@@ -37,13 +37,27 @@ async def cb_rev_skip(cb: CallbackQuery):
 
 @router.message(ReviewFSM.text, F.photo)
 async def st_review_photo(message: Message, state: FSMContext):
-    # UGC: фото-отзыв
+    # UGC: фото-отзыв (фото качаем сразу — file_id чужого бота в канал не уйдёт)
+    from pathlib import Path
+
+    from app.config import BASE_DIR
+
     oid = pending_review.get(message.from_user.id)
     if oid is None:
         await state.clear()
         return
-    file_id = message.photo[-1].file_id if message.photo else None
     text = (message.caption or "").strip()[:1000] or "Фото-отзыв"
+    local_path = ""
+    try:
+        bot = message.bot
+        f = await bot.get_file(message.photo[-1].file_id)
+        buf = await bot.download_file(f.file_path)
+        rdir = BASE_DIR / "data" / "reviews"
+        rdir.mkdir(parents=True, exist_ok=True)
+        local_path = str(rdir / f"rev_{oid}.jpg")
+        Path(local_path).write_bytes(buf.read())
+    except Exception:
+        local_path = ""
     async with SessionMaker() as s:
         from app.models import Review, User as U, LoyaltyTransaction
 
@@ -59,7 +73,10 @@ async def st_review_photo(message: Message, state: FSMContext):
             await state.clear()
             pending_review.pop(message.from_user.id, None)
             return
-        s.add(Review(user_id=message.from_user.id, order_id=oid, text=text, rating=5, is_published=False))
+        rev = Review(user_id=message.from_user.id, order_id=oid, text=text, rating=5, is_published=False)
+        s.add(rev)
+        await s.flush()
+        rid = rev.id
         user = await s.get(U, message.from_user.id)
         if user:
             user.bonus_points = (user.bonus_points or 0) + 50
@@ -67,17 +84,19 @@ async def st_review_photo(message: Message, state: FSMContext):
         await s.commit()
     await state.clear()
     pending_review.pop(message.from_user.id, None)
-    await message.answer("Спасибо за фото-отзыв! +50 бонусов 🎁", reply_markup=main_menu())
-    # пост в канал как UGC
-    try:
-        uname = f"@{message.from_user.username}" if message.from_user.username else "клиент"
-        cap = f"⭐️ <b>Отзыв</b> {html.escape(uname)}\n{html.escape(text[:500])}"
-        if file_id and notify.admin_bot and settings.shop_channel_id:
-            await notify.admin_bot.send_photo(chat_id=settings.shop_channel_id, photo=file_id, caption=cap)
-        else:
-            await notify.notify_admins(f"⭐️ UGC отзыв #{oid}: {html.escape(text[:500])}")
-    except Exception:
-        pass
+    await message.answer("Спасибо за фото-отзыв! +50 бонусов 🎁 После проверки выложим в канал.", reply_markup=main_menu())
+    # на модерацию админам
+    uname = f"@{message.from_user.username}" if message.from_user.username else "без юзернейма"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ В канал", callback_data=f"rv_pub:{rid}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"rv_del:{rid}")],
+        ]
+    )
+    await notify.notify_admins(
+        f"⭐️ <b>Фото-отзыв на модерации</b> (заказ №{oid})\n"
+        f"👤 {html.escape(message.from_user.first_name or '')} {uname}\n\n{html.escape(text[:800])}",
+        kb,
+    )
 
 
 @router.message(ReviewFSM.text, F.text)
@@ -111,7 +130,10 @@ async def st_review_text(message: Message, state: FSMContext):
             await state.clear()
             pending_review.pop(message.from_user.id, None)
             return
-        s.add(Review(user_id=message.from_user.id, order_id=oid, text=text, rating=5))
+        rev = Review(user_id=message.from_user.id, order_id=oid, text=text, rating=5)
+        s.add(rev)
+        await s.flush()
+        rid = rev.id
         user = await s.get(U, message.from_user.id)
         if user:
             user.bonus_points = (user.bonus_points or 0) + 50
@@ -119,9 +141,17 @@ async def st_review_text(message: Message, state: FSMContext):
         await s.commit()
     await state.clear()
     pending_review.pop(message.from_user.id, None)
-    await message.answer("Спасибо за отзыв! +50 бонусов начислено 🎁", reply_markup=main_menu())
-    # уведомить админов
+    await message.answer("Спасибо за отзыв! +50 бонусов начислено 🎁 После проверки выложим в канал.", reply_markup=main_menu())
+    # на модерацию админам
     uname = f"@{message.from_user.username}" if message.from_user.username else "без юзернейма"
-    await notify.notify_admins(f"⭐️ <b>Новый отзыв</b> к заказу №{oid}\n👤 {html.escape(message.from_user.first_name or '')} {uname} · <code>{message.from_user.id}</code>\n\n{html.escape(text[:1000])}")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ В канал", callback_data=f"rv_pub:{rid}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"rv_del:{rid}")],
+        ]
+    )
+    await notify.notify_admins(
+        f"⭐️ <b>Отзыв на модерации</b> (заказ №{oid})\n👤 {html.escape(message.from_user.first_name or '')} {uname} · <code>{message.from_user.id}</code>\n\n{html.escape(text[:800])}",
+        kb,
+    )
 
 

@@ -53,6 +53,7 @@ router.callback_query.filter(_is_admin_cb)
 class AdminFSM(StatesGroup):
     price = State()
     tracking = State()
+    broadcast = State()
 
 
 @router.message(Command("admin"))
@@ -235,6 +236,47 @@ async def st_tracking(message: Message, state: FSMContext):
         return
     await notify.notify_user(order.user_id, notify.order_status_text(order))
     await send_order_card(message, oid, note="Трек-номер сохранён")
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, state: FSMContext):
+    await state.set_state(AdminFSM.broadcast)
+    await message.answer("📣 Пришли текст рассылки одним сообщением (или /cancel чтобы отменить).")
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel_broadcast(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Отменено.")
+
+
+@router.message(AdminFSM.broadcast, F.text)
+async def st_broadcast(message: Message, state: FSMContext):
+    text = (message.text or "").strip()[:3000]
+    await state.clear()
+    if not text or text == "/cancel":
+        await message.answer("Отменено.")
+        return
+    bot = notify.shop_bot
+    if bot is None:
+        await message.answer("Шоп-бот не запущен.")
+        return
+    async with SessionMaker() as s:
+        users = (await s.scalars(select(User).where(User.is_banned == False))).all()  # noqa: E712
+        ids = [u.id for u in users]
+    await message.answer(f"📣 Рассылка {len(ids)} юзерам пошла...")
+    sent = 0
+    for uid in ids:
+        try:
+            await bot.send_message(uid, text)
+            sent += 1
+        except Exception:
+            continue
+        await asyncio.sleep(0.05)
+    async with SessionMaker() as s:
+        s.add(AdminAudit(admin_id=message.from_user.id, action="broadcast", entity="users", entity_id=None, payload={"sent": sent, "total": len(ids)}))
+        await s.commit()
+    await message.answer(f"✅ Разослано {sent}/{len(ids)}.")
 
 
 @router.message(Command("crm"))
@@ -633,6 +675,77 @@ async def cb_reject(cb: CallbackQuery):
     await cb.answer("Отклонён")
 
 
+@router.callback_query(F.data.startswith("rv_pub:"))
+async def cb_review_publish(cb: CallbackQuery):
+    try:
+        rid = int(cb.data.split(":")[1])
+    except Exception:
+        await cb.answer()
+        return
+    import os
+
+    from aiogram.types import FSInputFile
+
+    from app.config import BASE_DIR
+    from app.models import Review
+
+    bot = notify.admin_bot
+    async with SessionMaker() as s:
+        rev = await s.get(Review, rid)
+        if rev is None:
+            await cb.answer("Отзыв не найден", show_alert=True)
+            return
+        if rev.is_published:
+            await cb.answer("Уже опубликован", show_alert=True)
+            return
+        rev.is_published = True
+        await s.commit()
+        text, oid, uid = rev.text, rev.order_id, rev.user_id
+    cap = f"⭐️ <b>Отзыв покупателя</b>\n\n{html.escape(text[:900])}\n\n🛒 Заказывай: @{settings.shop_username}"
+    photo_path = str(BASE_DIR / "data" / "reviews" / f"rev_{oid}.jpg")
+    try:
+        if bot is not None and os.path.exists(photo_path):
+            await bot.send_photo(chat_id=settings.shop_channel_id, photo=FSInputFile(photo_path), caption=cap)
+        elif bot is not None:
+            await bot.send_message(chat_id=settings.shop_channel_id, text=cap)
+    except Exception as e:
+        await cb.answer(f"Не вышло: {e}", show_alert=True)
+        return
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await cb.answer("Опубликован ✅")
+    await notify.notify_user(uid, "⭐️ Твой отзыв опубликован в канале! Спасибо!")
+
+
+@router.callback_query(F.data.startswith("rv_del:"))
+async def cb_review_delete(cb: CallbackQuery):
+    try:
+        rid = int(cb.data.split(":")[1])
+    except Exception:
+        await cb.answer()
+        return
+    from app.models import LoyaltyTransaction, Review
+
+    async with SessionMaker() as s:
+        rev = await s.get(Review, rid)
+        if rev is None:
+            await cb.answer("Отзыв не найден", show_alert=True)
+            return
+        user = await s.get(User, rev.user_id)
+        if user:
+            user.bonus_points = max(0, (user.bonus_points or 0) - 50)
+            s.add(LoyaltyTransaction(user_id=user.id, order_id=rev.order_id, points=-50, kind="review", note=f"Отзыв №{rid} отклонён"))
+        await s.delete(rev)
+        await s.commit()
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await cb.answer("Отклонён")
+
+
 @router.callback_query(F.data.startswith("sp:"))
 async def cb_price(cb: CallbackQuery, state: FSMContext):
     pid = int(cb.data.split(":")[1])
@@ -659,6 +772,7 @@ async def st_price(message: Message, state: FSMContext):
     async with SessionMaker() as s:
         p = await s.get(Product, pid)
         if p is not None:
+            old_price = int(p.retail_price or 0)
             p.retail_price = round(val)
             s.add(AdminAudit(admin_id=message.from_user.id, action="set_price", entity="product", entity_id=pid, payload={"price": round(val)}))
             await s.commit()
@@ -668,6 +782,32 @@ async def st_price(message: Message, state: FSMContext):
                 n = await retention_svc.check_stock_requests(s, p)
                 if n:
                     await message.answer(f"📩 Размер дождались {n} чел. — пуш отправлен.")
+            except Exception:
+                pass
+            # цена упала — пуш избранному
+            try:
+                if old_price and round(val) < old_price:
+                    from app.models import Favorite
+
+                    from aiogram.types import InlineKeyboardButton as _B
+                    from aiogram.types import InlineKeyboardMarkup as _KB
+
+                    favs = (await s.scalars(select(Favorite).where(Favorite.product_id == pid))).all()
+                    kb = _KB(inline_keyboard=[[_B(text="🛍 Открыть", callback_data=f"pr:{pid}")]])
+                    cnt = 0
+                    for f in favs:
+                        try:
+                            if notify.shop_bot is not None:
+                                await notify.shop_bot.send_message(
+                                    f.user_id,
+                                    f"📉 Цена упала: <b>{html.escape(p.title)}</b> — было {old_price}₽, стало {int(round(val))}₽!",
+                                    reply_markup=kb,
+                                )
+                                cnt += 1
+                        except Exception:
+                            continue
+                    if cnt:
+                        await message.answer(f"📉 Об уценке сообщил {cnt} чел. из избранного.")
             except Exception:
                 pass
     await message.answer(f"💰 Цена товара #{pid}: {round(val)} ₽")

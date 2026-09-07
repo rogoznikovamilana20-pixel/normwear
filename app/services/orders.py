@@ -94,20 +94,27 @@ async def validate_promo(session: AsyncSession, code: str | None, subtotal: floa
     return promo, round(discount, 2), None
 
 
+BUNDLE_CATEGORIES = 2  # минимум разных категорий для комплекта
+BUNDLE_DISCOUNT = 0.10  # −10% за комплект
+
+
 async def preview_totals(session: AsyncSession, user: User, promo_code: str | None, use_bonus: bool) -> dict:
     items = await get_cart(session, user.id)
     subtotal = sum(float(p.retail_price or 0) * ci.qty for ci, p in items)
     _, discount, promo_error = await validate_promo(session, promo_code, subtotal, user.id)
     if promo_error:
         discount = 0.0
+    cats = {p.category_id for _, p in items if p.category_id}
+    bundle = round((subtotal - discount) * BUNDLE_DISCOUNT, 2) if len(cats) >= BUNDLE_CATEGORIES else 0.0
     bonus_available = user.bonus_points or 0
     bonus_max = min(bonus_available, math.floor(subtotal * BONUS_SPEND_SHARE)) if subtotal else 0
     bonus_used = bonus_max if use_bonus else 0
-    total = max(0.0, subtotal - discount - bonus_used)
+    total = max(0.0, subtotal - discount - bundle - bonus_used)
     return {
         "items": items,
         "subtotal": round(subtotal, 2),
         "discount": discount,
+        "bundle": bundle,
         "promo_error": promo_error if promo_code else None,
         "bonus_available": bonus_available,
         "bonus_max": bonus_max,
@@ -126,7 +133,8 @@ async def create_order(session: AsyncSession, user: User, data: dict):
         promo = None
         discount = 0.0
     bonus_used = totals["bonus_used"]
-    total = max(0.0, totals["subtotal"] - discount - bonus_used)
+    bundle = totals.get("bundle", 0.0)
+    total = max(0.0, totals["subtotal"] - discount - bundle - bonus_used)
     order = Order(
         user_id=user.id,
         status="awaiting_delivery",
@@ -143,6 +151,8 @@ async def create_order(session: AsyncSession, user: User, data: dict):
     )
     session.add(order)
     await session.flush()
+    low_stock: list[str] = []
+    sold_out: list[str] = []
     for ci, p in totals["items"]:
         brand = await session.get(Brand, p.brand_id) if p.brand_id else None
         session.add(
@@ -156,6 +166,28 @@ async def create_order(session: AsyncSession, user: User, data: dict):
                 qty=ci.qty,
             )
         )
+        # контроль стоков
+        try:
+            p.stock = max(0, (p.stock or 0) - (ci.qty or 1))
+            if p.stock <= 0 and p.status == "published":
+                p.status = "archived"
+                sold_out.append(p.title)
+            elif p.stock <= 2 and p.status == "published":
+                low_stock.append(f"{p.title} (осталось {p.stock})")
+        except Exception:
+            pass
+    if sold_out or low_stock:
+        try:
+            from app.services import notify as notify_svc
+
+            lines = []
+            if sold_out:
+                lines.append("⛔️ Закончились и сняты с публикации:\n• " + "\n• ".join(sold_out))
+            if low_stock:
+                lines.append("⚠️ Заканчиваются:\n• " + "\n• ".join(low_stock))
+            await notify_svc.notify_admins("📦 <b>Стоки</b>\n\n" + "\n\n".join(lines))
+        except Exception:
+            pass
     session.add(OrderStatusHistory(order_id=order.id, from_status=None, to_status="awaiting_delivery", changed_by=user.id))
     if promo is not None:
         promo.used_count += 1

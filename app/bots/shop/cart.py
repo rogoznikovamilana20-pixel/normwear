@@ -132,6 +132,8 @@ async def show_summary(target: Message, state: FSMContext):
     ]
     if totals["discount"]:
         lines.append(f"🎟 Промокод {d.get('promo_code')}: −{int(totals['discount'])} ₽")
+    if totals.get("bundle"):
+        lines.append(f"👔 Комплект (2+ категории): −{int(totals['bundle'])} ₽")
     if totals["bonus_used"]:
         lines.append(f"🎁 Бонусы: −{totals['bonus_used']} ₽")
     if totals.get("promo_error"):
