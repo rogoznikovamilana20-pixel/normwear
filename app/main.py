@@ -50,8 +50,19 @@ async def run_all() -> None:
         await seed_basic(s)
         log.info("Seed done")
 
-    shop = Bot(settings.shop_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    admin = Bot(settings.admin_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Боты создаём только если есть валидные токены — иначе web only (Render без секретов не должен падать)
+    shop = None
+    admin = None
+    if settings.shop_bot_token and len(settings.shop_bot_token.split(":")) == 2:
+        try:
+            shop = Bot(settings.shop_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        except Exception as e:
+            log.warning("shop Bot init failed: %s", e)
+    if settings.admin_bot_token and len(settings.admin_bot_token.split(":")) == 2:
+        try:
+            admin = Bot(settings.admin_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        except Exception as e:
+            log.warning("admin Bot init failed: %s", e)
     notify.shop_bot = shop
     notify.admin_bot = admin
     admin_module.known_brands = set(yandex_library.brand_titles)
@@ -84,14 +95,28 @@ async def run_all() -> None:
     tasks = [asyncio.create_task(server.serve())]
     if not settings.run_bots:
         log.info("RUN_BOTS=false: web only")
-    elif not settings.shop_bot_token or not settings.admin_bot_token:
-        log.warning("BOT TOKENS пустые — боты не запустятся, только веб")
+    elif shop is None or admin is None:
+        log.warning("BOT TOKENS пустые/невалидные — боты не запустятся, только веб")
     else:
         # set_my_commands с таймаутом 5с — не вешаем старт веба
         try:
             await asyncio.wait_for(shop.set_my_commands(SHOP_COMMANDS), timeout=5)
         except Exception as e:
             log.warning("shop set_my_commands failed: %s", e)
+        # Синяя кнопка Menu слева от ввода -> открывает мини-апп сразу
+        try:
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+            miniapp_base = (settings.miniapp_url_template or "").split("?")[0].replace("/app/", "/").rstrip("/") + "/"
+            if not miniapp_base.startswith("https://"):
+                miniapp_base = "https://normwear-shop.onrender.com/"
+            await asyncio.wait_for(
+                shop.set_chat_menu_button(menu_button=MenuButtonWebApp(text="🛍 Каталог", web_app=WebAppInfo(url=miniapp_base))),
+                timeout=5,
+            )
+            log.info("Shop menu button -> %s", miniapp_base)
+        except Exception as e:
+            log.warning("shop menu button failed: %s", e)
         try:
             await asyncio.wait_for(admin.set_my_commands(ADMIN_COMMANDS), timeout=5)
         except Exception as e:
@@ -116,14 +141,16 @@ async def run_all() -> None:
             await yandex_library.aclose()
         except Exception:
             pass
-        try:
-            await shop.session.close()
-        except Exception:
-            pass
-        try:
-            await admin.session.close()
-        except Exception:
-            pass
+        if shop is not None:
+            try:
+                await shop.session.close()
+            except Exception:
+                pass
+        if admin is not None:
+            try:
+                await admin.session.close()
+            except Exception:
+                pass
 
 
 def check() -> None:

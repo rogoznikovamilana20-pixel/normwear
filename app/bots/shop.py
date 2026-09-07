@@ -9,14 +9,14 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db import SessionMaker
-from app.models import Brand, CartItem, Order, Product, ProductPhoto, SupportMessage, SupportTicket, User
+from app.models import Brand, CartItem, FortuneSpin, Order, Product, ProductPhoto, PromoCode, SupportMessage, SupportTicket, User
 from app.services import notify, orders
 from app.services.photos import yandex_library
 
 router = Router()
 settings = get_settings()
 
-MENU = {"🛍 Каталог", "🛒 Корзина", "📦 Мои заказы", "🎁 Бонусы", "📞 Поддержка", "🔔 Дропы"}
+MENU = {"🛍 Каталог", "🛒 Корзина", "☰ Меню", "📦 Мои заказы", "🎁 Бонусы", "📞 Поддержка", "🔔 Дропы", "🎡 Колесо", "📦 BOX"}
 
 WELCOME = (
     "👋 Добро пожаловать в <b>NORMWEAR</b>\n"
@@ -29,29 +29,57 @@ WELCOME = (
 
 
 def _miniapp_url() -> str | None:
-    # берём из .env MINIAPP_URL_TEMPLATE, иначе пробуем duckdns, иначе локально
-    tpl = settings.miniapp_url_template
-    if tpl and tpl.strip():
-        # если шаблон с {product_id} — убираем параметр для главной
-        return tpl.split("?")[0].replace("/app/", "/").rstrip("/") + "/"
-    # fallback — локально (в ТГ нужен https, но для браузера сойдёт)
-    return None
+    # Только публичный https подходит для Telegram WebApp.
+    # Шаблон вида https://host/app/?product={id} -> корень https://host/
+    tpl = (settings.miniapp_url_template or "").strip()
+    if tpl:
+        base = tpl.split("?")[0].replace("/app/", "/").rstrip("/") + "/"
+        if base.startswith("https://"):
+            return base
+    # canonical fallback — Render (когда поднимется, кнопки сразу оживут)
+    return "https://normwear-shop.onrender.com/"
+
+
+def miniapp_available() -> bool:
+    # Проверять жив ли хост здесь не будем — ТГ сам покажет ошибку.
+    # Кнопку показываем всегда, чтобы мини-апп был виден в боте/канале.
+    return True
 
 
 def main_menu() -> ReplyKeyboardMarkup:
+    # компактно: только 3 кнопки внизу, остальное — inline в чате
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🛍 Каталог"), KeyboardButton(text="🛒 Корзина")],
+            [KeyboardButton(text="☰ Меню")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def menu_inline() -> InlineKeyboardMarkup:
     miniapp = _miniapp_url()
-    rows = [
-        [KeyboardButton(text="🛍 Каталог"), KeyboardButton(text="🛒 Корзина")],
-        [KeyboardButton(text="📦 Мои заказы"), KeyboardButton(text="🎁 Бонусы")],
-        [KeyboardButton(text="🔔 Дропы"), KeyboardButton(text="📞 Поддержка")],
+    rows: list[list[InlineKeyboardButton]] = []
+    # Мини-каталог всегда первой строкой: WebApp если https, иначе ссылка на бота
+    try:
+        from aiogram.types import WebAppInfo as _WAI
+
+        if miniapp and miniapp.startswith("https://"):
+            rows.append([InlineKeyboardButton(text="✨ Мини-каталог", web_app=_WAI(url=miniapp))])
+        else:
+            rows.append([InlineKeyboardButton(text="✨ Мини-каталог", url=f"https://t.me/{settings.shop_username}?start=catalog")])
+    except Exception:
+        pass
+    rows += [
+        [InlineKeyboardButton(text="📦 Мои заказы", callback_data="m_orders"), InlineKeyboardButton(text="🎁 Бонусы", callback_data="m_bonus")],
+        [InlineKeyboardButton(text="🔔 Дропы", callback_data="m_drops"), InlineKeyboardButton(text="🎡 Колесо", callback_data="m_wheel")],
+        [InlineKeyboardButton(text="📦 BOX", callback_data="m_box"), InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
     ]
-    # WebApp кнопка видна только в ТГ, требует https — добавляем только если url https
-    if miniapp and miniapp.startswith("https://"):
-        try:
-            rows.insert(0, [KeyboardButton(text="✨ Мини-каталог", web_app=WebAppInfo(url=miniapp))])
-        except Exception:
-            pass
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def send_menu(target: Message):
+    await target.answer("☰ <b>Меню NORMWEAR</b>\nВыбери раздел:", reply_markup=menu_inline())
 
 
 def cancel_kb() -> InlineKeyboardMarkup:
@@ -90,7 +118,37 @@ async def cmd_start(message: Message, state: FSMContext):
     if payload == "checkout":
         await render_cart(message, message.from_user.id)
         return
+    if payload == "catalog":
+        await message.answer(WELCOME, reply_markup=main_menu())
+        await send_brands(message)
+        return
+    if payload == "wheel":
+        await message.answer(WELCOME, reply_markup=main_menu())
+        await send_wheel(message)
+        return
+    if payload.startswith("product_"):
+        await message.answer(WELCOME, reply_markup=main_menu())
+        try:
+            pid = int(payload.split("_", 1)[1])
+            async with SessionMaker() as s:
+                p = await s.get(Product, pid)
+                if p is not None and p.status == "published":
+                    brand = await s.get(Brand, p.brand_id) if p.brand_id else None
+                    bname = f"<b>{html.escape(brand.title)}</b> · " if brand else ""
+                    await message.answer(
+                        f"{bname}<b>{html.escape(p.title)}</b>\n\n💰 <b>{int(p.retail_price or 0)}₽</b>\n📏 {html.escape(', '.join(str(x) for x in (p.sizes or [])) or '—')}",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🛍 Открыть карточку", callback_data=f"pr:{p.id}")],
+                            [InlineKeyboardButton(text="🛍 Весь каталог", callback_data="cat")],
+                        ]),
+                    )
+                    return
+        except Exception:
+            pass
+        await send_brands(message)
+        return
     await message.answer(WELCOME, reply_markup=main_menu())
+    await send_menu(message)
 
 
 @router.message(StateFilter(None), F.text.in_(MENU))
@@ -100,6 +158,8 @@ async def menu_texts(message: Message, state: FSMContext):
         await send_brands(message)
     elif text == "🛒 Корзина":
         await render_cart(message, message.from_user.id)
+    elif text == "☰ Меню":
+        await send_menu(message)
     elif text == "📦 Мои заказы":
         await send_my_orders(message)
     elif text == "🎁 Бонусы":
@@ -108,6 +168,52 @@ async def menu_texts(message: Message, state: FSMContext):
         await message.answer("✍️ Напишите ваш вопрос одним сообщением — менеджер ответит прямо в этот чат.")
     elif text == "🔔 Дропы":
         await send_drops(message)
+    elif text == "🎡 Колесо":
+        await send_wheel(message)
+    elif text == "📦 BOX":
+        await send_box(message)
+
+
+@router.callback_query(F.data == "m_menu")
+async def cb_m_menu(cb: CallbackQuery):
+    await cb.message.answer("☰ <b>Меню NORMWEAR</b>\nВыбери раздел:", reply_markup=menu_inline())
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_orders")
+async def cb_m_orders(cb: CallbackQuery):
+    await send_my_orders(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_bonus")
+async def cb_m_bonus(cb: CallbackQuery):
+    await send_bonuses(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_drops")
+async def cb_m_drops(cb: CallbackQuery):
+    await send_drops(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_wheel")
+async def cb_m_wheel(cb: CallbackQuery):
+    await send_wheel(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_box")
+async def cb_m_box(cb: CallbackQuery):
+    await send_box(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "m_support")
+async def cb_m_support(cb: CallbackQuery):
+    await cb.message.answer("✍️ Напишите ваш вопрос одним сообщением — менеджер ответит прямо в этот чат.")
+    await cb.answer()
 
 
 @router.callback_query(F.data == "home")
@@ -184,6 +290,15 @@ async def cb_brand(cb: CallbackQuery):
         nav.append(InlineKeyboardButton(text="▶️", callback_data=f"br:{bid}:{page + 1}"))
     if nav:
         rows.append(nav)
+    # подписка на бренд
+    from app.models import BrandSubscription
+
+    async with SessionMaker() as s2:
+        is_sub = (
+            await s2.scalars(select(BrandSubscription).where(BrandSubscription.user_id == cb.from_user.id, BrandSubscription.brand_id == bid))
+        ).first() is not None
+    sub_text = "🔕 Отписаться" if is_sub else "🔔 Подписаться"
+    rows.append([InlineKeyboardButton(text=f"{sub_text} {brand.title}", callback_data=f"bsub:{bid}")])
     rows.append([InlineKeyboardButton(text="🏠 Каталог", callback_data="cat"), InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
     try:
         await cb.message.edit_text(f"🏷 <b>{html.escape(brand.title)}</b> · стр. {page + 1}", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -200,6 +315,31 @@ async def cb_brand(cb: CallbackQuery):
 
 async def session_count_published(s, bid: int) -> int:
     return (await s.execute(select(func.count()).select_from(Product).where(Product.brand_id == bid, Product.status == "published"))).scalar() or 0
+
+
+@router.callback_query(F.data.startswith("bsub:"))
+async def cb_brand_sub(cb: CallbackQuery):
+    bid = int(cb.data.split(":")[1])
+    from app.models import BrandSubscription
+
+    async with SessionMaker() as s:
+        brand = await s.get(Brand, bid)
+        if not brand:
+            await cb.answer("Бренд не найден", show_alert=True)
+            return
+        sub = (
+            await s.scalars(select(BrandSubscription).where(BrandSubscription.user_id == cb.from_user.id, BrandSubscription.brand_id == bid))
+        ).first()
+        if sub:
+            await s.delete(sub)
+            await s.commit()
+            await cb.answer(f"Отписался от {brand.title}")
+        else:
+            s.add(BrandSubscription(user_id=cb.from_user.id, brand_id=bid))
+            await s.commit()
+            await cb.answer(f"Подписался на {brand.title} 🔔")
+    # обновляем клавиатуру
+    await cb_brand(cb)
 
 
 @router.callback_query(F.data.startswith("pr:"))
@@ -557,6 +697,159 @@ async def send_drops(message: Message):
     await message.answer(text, reply_markup=kb)
 
 
+async def send_box(message: Message):
+    from app.models import BoxSubscription
+
+    async with SessionMaker() as s:
+        sub = (await s.scalars(select(BoxSubscription).where(BoxSubscription.user_id == message.from_user.id, BoxSubscription.is_active == True))).first()
+    if sub:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отписаться", callback_data="box_unsub")]])
+        await message.answer("📦 <b>NORM BOX</b> — ты уже подписан! Каждый месяц 3 вещи-сюрприз за 5990₽. Отпишись если не нужен.", reply_markup=kb)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подписаться 5990₽/мес", callback_data="box_sub")]])
+    await message.answer(
+        "📦 <b>NORM BOX — подписка</b>\n\nКаждый месяц 3 рандомные вещи (худи/кроссы/аксы) за <b>5990₽</b>.\nЛимитированные дропы — только для подписчиков BOX.\n\nЖми и подпишись!",
+        reply_markup=kb,
+    )
+
+
+async def send_wheel(message: Message):
+    from datetime import datetime, timedelta
+
+    from app.models import FortuneSpin
+
+    async with SessionMaker() as s:
+        last = (
+            await s.scalars(select(FortuneSpin).where(FortuneSpin.user_id == message.from_user.id).order_by(FortuneSpin.id.desc()))
+        ).first()
+        can_spin = True
+        if last and last.created_at.date() == datetime.utcnow().date():
+            can_spin = False
+    if not can_spin:
+        await message.answer("🎡 Ты уже крутил сегодня — возвращайся завтра и попытай удачу снова!", reply_markup=main_menu())
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎡 Крутить!", callback_data="wheel_spin")]])
+    await message.answer(
+        "🎡 <b>Колесо фортуны NORMWEAR</b>\n\nКрути раз в день и выигрывай:\n• 5% / 10% / 15% скидка\n• +50 / +100 бонусов\n\nЖми и испытай удачу!",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data == "wheel_spin")
+async def cb_wheel_spin(cb: CallbackQuery):
+    import random
+    from datetime import datetime
+
+    from app.models import FortuneSpin
+
+    async with SessionMaker() as s:
+        last = (
+            await s.scalars(select(FortuneSpin).where(FortuneSpin.user_id == cb.from_user.id).order_by(FortuneSpin.id.desc()))
+        ).first()
+        if last and last.created_at.date() == datetime.utcnow().date():
+            await cb.answer("Уже крутил сегодня", show_alert=True)
+            return
+        prizes = [
+            ("5%", 5, 30),
+            ("10%", 10, 25),
+            ("15%", 15, 15),
+            ("+50", 50, 15),
+            ("+100", 100, 10),
+            ("20%", 20, 5),
+        ]
+        # weighted choice
+        pool = []
+        for name, val, w in prizes:
+            pool.extend([(name, val)] * w)
+        prize_name, prize_val = random.choice(pool)
+        # выдаём
+        text = ""
+        if prize_name.startswith("+"):
+            # бонусы
+            user = await s.get(User, cb.from_user.id)
+            if user:
+                user.bonus_points = (user.bonus_points or 0) + prize_val
+                from app.models import LoyaltyTransaction
+
+                s.add(LoyaltyTransaction(user_id=user.id, points=prize_val, kind="wheel", note=f"Колесо {prize_name}"))
+            s.add(FortuneSpin(user_id=cb.from_user.id, prize=prize_name, value=prize_val))
+            await s.commit()
+            text = f"🎉 Выпало <b>{prize_name} бонусов</b>! Начислено на счёт."
+        else:
+            # промокод
+            code = f"WHEEL{prize_val}_{cb.from_user.id % 10000}{random.randint(10,99)}"
+            # уникальность
+            exists = (await s.scalars(select(PromoCode).where(PromoCode.code == code))).first()
+            if not exists:
+                s.add(PromoCode(code=code, kind="percent", value=float(prize_val), min_order=2000, max_uses=1))
+            s.add(FortuneSpin(user_id=cb.from_user.id, prize=prize_name, value=prize_val))
+            await s.commit()
+            text = f"🎉 Выпало <b>{prize_name} скидка</b>!\nТвой промокод: <code>{code}</code>\nВставь при оформлении — действует 1 раз."
+        # стрик 3 дня подряд = +100
+        try:
+            from datetime import timedelta
+
+            spins = (
+                await s.scalars(select(FortuneSpin).where(FortuneSpin.user_id == cb.from_user.id).order_by(FortuneSpin.id.desc()).limit(5))
+            ).all()
+            days = sorted({sp.created_at.date() for sp in spins}, reverse=True)
+            today = datetime.utcnow().date()
+            streak = 0
+            for i, d in enumerate(days):
+                if d == today - timedelta(days=i):
+                    streak += 1
+                else:
+                    break
+            if streak >= 3:
+                user2 = await s.get(User, cb.from_user.id)
+                if user2:
+                    user2.bonus_points = (user2.bonus_points or 0) + 100
+                    from app.models import LoyaltyTransaction
+
+                    s.add(LoyaltyTransaction(user_id=user2.id, points=100, kind="wheel_streak", note="Стрик 3 дня"))
+                    await s.commit()
+                    text += "\n\n🔥 Стрик 3 дня! +100 бонусов."
+            elif streak == 2:
+                text += "\n\nЗавтра крути снова — будет стрик 3 дня и +100."
+        except Exception:
+            pass
+    try:
+        await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Меню", callback_data="home")]]))
+    except Exception:
+        await cb.message.answer(text)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "box_sub")
+async def cb_box_sub(cb: CallbackQuery):
+    from app.models import BoxSubscription
+
+    async with SessionMaker() as s:
+        exists = (await s.scalars(select(BoxSubscription).where(BoxSubscription.user_id == cb.from_user.id, BoxSubscription.is_active == True))).first()
+        if exists:
+            await cb.answer("Уже подписан", show_alert=True)
+            return
+        s.add(BoxSubscription(user_id=cb.from_user.id, plan="monthly"))
+        await s.commit()
+    await cb.answer("Подписался на BOX ✅")
+    await cb.message.answer("📦 Подписка NORM BOX оформлена! Каждый месяц 3 вещи за 5990₽. Менеджер свяжется для оплаты.")
+
+
+@router.callback_query(F.data == "box_unsub")
+async def cb_box_unsub(cb: CallbackQuery):
+    from app.models import BoxSubscription
+
+    async with SessionMaker() as s:
+        sub = (await s.scalars(select(BoxSubscription).where(BoxSubscription.user_id == cb.from_user.id, BoxSubscription.is_active == True))).first()
+        if sub:
+            sub.is_active = False
+            await s.commit()
+            await cb.answer("Отписался")
+            await cb.message.answer("📦 Отписался от BOX.")
+        else:
+            await cb.answer("Нет подписки", show_alert=True)
+
+
 @router.callback_query(F.data == "drop_sub")
 async def cb_drop_sub(cb: CallbackQuery):
     from app.models import DropSubscription
@@ -593,6 +886,51 @@ async def cb_rev_skip(cb: CallbackQuery):
     await cb.answer("Ок, в другой раз!")
     try:
         await cb.message.delete()
+    except Exception:
+        pass
+
+
+@router.message(ReviewFSM.text, F.photo)
+async def st_review_photo(message: Message, state: FSMContext):
+    # UGC: фото-отзыв
+    oid = pending_review.get(message.from_user.id)
+    if oid is None:
+        await state.clear()
+        return
+    file_id = message.photo[-1].file_id if message.photo else None
+    text = (message.caption or "").strip()[:1000] or "Фото-отзыв"
+    async with SessionMaker() as s:
+        from app.models import Review, User as U, LoyaltyTransaction
+
+        order = await s.get(Order, oid)
+        if order is None or order.user_id != message.from_user.id or order.status != "completed":
+            await message.answer("Заказ не найден или не завершён.")
+            await state.clear()
+            pending_review.pop(message.from_user.id, None)
+            return
+        exists = (await s.scalars(select(Review).where(Review.order_id == oid))).first()
+        if exists:
+            await message.answer("Уже есть отзыв.")
+            await state.clear()
+            pending_review.pop(message.from_user.id, None)
+            return
+        s.add(Review(user_id=message.from_user.id, order_id=oid, text=text, rating=5, is_published=False))
+        user = await s.get(U, message.from_user.id)
+        if user:
+            user.bonus_points = (user.bonus_points or 0) + 50
+            s.add(LoyaltyTransaction(user_id=user.id, order_id=oid, points=50, kind="review", note=f"Бонус за фото-отзыв {oid}"))
+        await s.commit()
+    await state.clear()
+    pending_review.pop(message.from_user.id, None)
+    await message.answer("Спасибо за фото-отзыв! +50 бонусов 🎁", reply_markup=main_menu())
+    # пост в канал как UGC
+    try:
+        uname = f"@{message.from_user.username}" if message.from_user.username else "клиент"
+        cap = f"⭐️ <b>Отзыв</b> {html.escape(uname)}\n{html.escape(text[:500])}"
+        if file_id and notify.admin_bot and settings.shop_channel_id:
+            await notify.admin_bot.send_photo(chat_id=settings.shop_channel_id, photo=file_id, caption=cap)
+        else:
+            await notify.notify_admins(f"⭐️ UGC отзыв #{oid}: {html.escape(text[:500])}")
     except Exception:
         pass
 
@@ -642,6 +980,102 @@ async def st_review_text(message: Message, state: FSMContext):
     await notify.notify_admins(f"⭐️ <b>Новый отзыв</b> к заказу №{oid}\n👤 {html.escape(message.from_user.first_name or '')} {uname} · <code>{message.from_user.id}</code>\n\n{html.escape(text[:1000])}")
 
 
+@router.message(StateFilter(None), F.voice)
+async def voice_search(message: Message):
+    # пока без SpeechKit — просим текстом, но сразу подсказываем поиск
+    await message.answer(
+        "🎙 Голос принят! Распознавание скоро включим.\n"
+        "А пока напиши текстом, например:\n"
+        "<code>найди худи до 10000</code> или <code>Bape M</code> — сразу покажу.",
+        reply_markup=main_menu(),
+    )
+
+
+async def try_text_search(message: Message) -> bool:
+    import re
+
+    raw = (message.text or "").strip()
+    t = raw.lower()
+    search_triggers = ("найди", "найти", "покажи", "покажите", "ищи", "ищу", "есть", "худи", "кросс", "футбол", "штаны", "куртк", "кепк", "до ")
+    is_search = any(x in t for x in search_triggers)
+    if not is_search:
+        # бренд в тексте = тоже поиск
+        from app.services.parser import BASE_BRANDS
+
+        is_search = any(kw in t for kw in BASE_BRANDS.keys())
+    if not is_search:
+        return False
+    # цена "до 10000"
+    max_price = None
+    m = re.search(r"до\s*(\d[\d\s.]*)", t)
+    if m:
+        try:
+            max_price = float(m.group(1).replace(" ", "").replace(".", ""))
+        except Exception:
+            max_price = None
+    # бренд
+    brand_kw = None
+    from app.services.parser import BASE_BRANDS as _BB
+
+    for kw, title in _BB.items():
+        if kw in t:
+            brand_kw = title
+            break
+    async with SessionMaker() as s:
+        q = select(Product).where(Product.status == "published").order_by(Product.id.desc()).limit(6)
+        if max_price:
+            q = select(Product).where(Product.status == "published", Product.retail_price <= max_price).order_by(Product.retail_price.desc()).limit(6)
+        prods = (await s.scalars(q)).all()
+        # фильтр по бренду если нашли
+        if brand_kw:
+            filtered = []
+            for p in prods:
+                b = await s.get(Brand, p.brand_id) if p.brand_id else None
+                if b and b.title.lower() == brand_kw.lower():
+                    filtered.append(p)
+            # если по бренду пусто — ищем по всем
+            if filtered:
+                prods = filtered
+            else:
+                all_q = select(Product).where(Product.status == "published").order_by(Product.id.desc()).limit(20)
+                all_prods = (await s.scalars(all_q)).all()
+                by_brand = []
+                for p in all_prods:
+                    b = await s.get(Brand, p.brand_id) if p.brand_id else None
+                    if b and b.title.lower() == brand_kw.lower() and (not max_price or (p.retail_price or 0) <= max_price):
+                        by_brand.append(p)
+                prods = by_brand[:6]
+        if not prods:
+            await message.answer("Ничего не нашёл — попробуй проще, например <code>Bape</code> или <code>худи до 5000</code>.", reply_markup=main_menu())
+            return True
+        rows = []
+        for p in prods:
+            rows.append([InlineKeyboardButton(text=f"{p.title[:30]} · {int(p.retail_price or 0)}₽", callback_data=f"pr:{p.id}")])
+        rows.append([InlineKeyboardButton(text="🛍 Весь каталог", callback_data="cat")])
+        hint = f" до {int(max_price)}₽" if max_price else ""
+        await message.answer(f"🔎 Нашёл{hint} — выбирай:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return True
+
+
+@router.message(StateFilter(None), F.photo)
+async def stylist_photo(message: Message):
+    # AI-стилист — пока random 3 товара, позже CLIP
+    async with SessionMaker() as s:
+        prods = (await s.scalars(select(Product).where(Product.status == "published").order_by(func.random()).limit(3))).all()
+        if not prods:
+            await message.answer("Каталог пока пуст — скоро будут новинки!")
+            return
+        lines = ["👗 <b>AI-стилист NORMWEAR</b> — вот что нашёл похожее:", ""]
+        kb_rows = []
+        for p in prods:
+            brand = await s.get(Brand, p.brand_id) if p.brand_id else None
+            bname = brand.title if brand else ""
+            lines.append(f"• <b>{html.escape(bname)}</b> {html.escape(p.title)} — <b>{int(p.retail_price or 0)}₽</b>")
+            kb_rows.append([InlineKeyboardButton(text=f"{p.title[:28]} · {int(p.retail_price or 0)}₽", callback_data=f"pr:{p.id}")])
+        kb_rows.append([InlineKeyboardButton(text="🛍 Весь каталог", callback_data="cat")])
+        await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
 @router.message(StateFilter(None), F.text & ~F.command)
 async def support_message(message: Message, state: FSMContext):
     text = (message.text or "").strip()
@@ -649,6 +1083,12 @@ async def support_message(message: Message, state: FSMContext):
         return
     if message.from_user.is_bot:
         return
+    # сначала пробуем как поиск, иначе — тикет в поддержку
+    try:
+        if await try_text_search(message):
+            return
+    except Exception:
+        pass
     async with SessionMaker() as s:
         ticket = (
             await s.scalars(
