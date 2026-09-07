@@ -166,9 +166,22 @@ async def cb_product(cb: CallbackQuery):
             if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
                 photo = ph.url
                 break
+    # fallback 2: локальное фото поставщика (скачано админ-ботом) — шоп-бот загружает сам
+    local_path = None
+    if photo is None:
+        import os
+
+        for ph in photos:
+            if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url):
+                local_path = ph.url
+                break
     try:
         if photo:
             await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+        elif local_path:
+            from aiogram.types import FSInputFile
+
+            await cb.message.answer_photo(photo=FSInputFile(local_path), caption=text, reply_markup=kb)
         else:
             await cb.message.answer(text, reply_markup=kb)
     except Exception:

@@ -76,6 +76,12 @@ def create_app() -> FastAPI:
                 for ph in photos:
                     if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
                         return ph.url
+                # локальные фото отдаём относительным путём (тот же хост)
+                import os
+
+                for ph in photos:
+                    if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url):
+                        return "/media/" + os.path.basename(ph.url)
                 return None
 
             # делаем запросы последовательно внутри одной сессии (параллель внутри сессии нежелательна),
@@ -289,4 +295,7 @@ def create_app() -> FastAPI:
     static_dir = BASE_DIR / "static"
     static_dir.mkdir(exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    media_dir = BASE_DIR / "data" / "supplier"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/media", StaticFiles(directory=str(media_dir)), name="media")
     return app
