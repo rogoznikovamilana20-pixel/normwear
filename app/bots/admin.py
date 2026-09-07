@@ -219,6 +219,35 @@ async def st_tracking(message: Message, state: FSMContext):
     await send_order_card(message, oid, note="Трек-номер сохранён")
 
 
+@router.message(Command("crm"))
+async def cmd_crm(message: Message):
+    async with SessionMaker() as s:
+        from sqlalchemy import func
+
+        from app.models import BoxSubscription, BrandSubscription, DropSubscription, FortuneSpin, Order, Review, User
+
+        users = (await s.execute(select(func.count()).select_from(User))).scalar() or 0
+        orders = (await s.execute(select(func.count()).select_from(Order))).scalar() or 0
+        rev = (await s.execute(select(func.coalesce(func.sum(Order.total), 0)).where(Order.status == "completed"))).scalar() or 0
+        subs_drop = (await s.execute(select(func.count()).select_from(DropSubscription))).scalar() or 0
+        subs_brand = (await s.execute(select(func.count()).select_from(BrandSubscription))).scalar() or 0
+        subs_box = (await s.execute(select(func.count()).select_from(BoxSubscription).where(BoxSubscription.is_active == True))).scalar() or 0
+        spins = (await s.execute(select(func.count()).select_from(FortuneSpin))).scalar() or 0
+        reviews = (await s.execute(select(func.count()).select_from(Review))).scalar() or 0
+        # воронка
+        carts = (await s.execute(select(func.count()).select_from(User).where(User.orders_count == 0))).scalar() or 0
+    text = (
+        "📊 <b>CRM NORMWEAR</b>\n\n"
+        f"👥 Пользователей: {users}\n"
+        f"📦 Заказов: {orders} (выручка {int(rev)}₽)\n"
+        f"🔔 Дропы: {subs_drop} | Бренды: {subs_brand} | BOX: {subs_box}\n"
+        f"🎡 Круток: {spins} | ⭐️ Отзывов: {reviews}\n"
+        f"🛒 Корзин без заказа: ~{carts}\n\n"
+        "Воронка: Зашли → Подписались → Крутили → Заказали → Отзыв"
+    )
+    await message.answer(text)
+
+
 @router.message(Command("promo"))
 async def cmd_promo(message: Message):
     args = (message.text or "").split()[1:]
@@ -241,6 +270,77 @@ async def cmd_promo(message: Message):
         await s.commit()
     lim = f", лимит {max_uses} активаций" if max_uses else ""
     await message.answer(f"🎟 Промокод <code>{code}</code>: −{value:g}% от {int(min_order)} ₽{lim}")
+
+
+@router.message(Command("droptimer"))
+async def cmd_droptimer(message: Message):
+    args = (message.text or "").split()[1:]
+    # формат: /droptimer 60 "Новый дроп Corteiz"
+    try:
+        minutes = int(args[0]) if args else 60
+    except ValueError:
+        minutes = 60
+    title = " ".join(args[1:]) if len(args) > 1 else "Новый дроп"
+    title = title.strip('"').strip("'")[:64] or "Новый дроп"
+    from datetime import timedelta
+
+    drop_at = utcnow() + timedelta(minutes=minutes)
+    async with SessionMaker() as s:
+        from app.models import DropTimer
+
+        timer = DropTimer(drop_at=drop_at, title=title)
+        s.add(timer)
+        await s.commit()
+        await s.refresh(timer)
+        tid = timer.id
+    # постим в канал
+    bot = notify.admin_bot
+    if bot and settings.shop_channel_id:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Напомнить", callback_data=f"drop_remind:{tid}")]])
+        try:
+            msg = await bot.send_message(
+                chat_id=settings.shop_channel_id,
+                text=f"⏰ <b>{title}</b> через {minutes} мин!\n\nЖми 🔔 чтобы не пропустить — пришлём пуш в бот.",
+            )
+            # обновляем таймер с message_id
+            async with SessionMaker() as s:
+                t = await s.get(DropTimer, tid)
+                if t:
+                    t.channel_message_id = msg.message_id
+                    await s.commit()
+            await bot.send_message(settings.shop_channel_id, " ", reply_markup=kb)  # костыль чтобы кнопка была отдельно если нужно
+            await message.answer(f"⏰ Таймер на {minutes} мин создан: <b>{title}</b> → канал, ID {tid}")
+        except Exception as e:
+            await message.answer(f"Ошибка поста в канал: {e}")
+    else:
+        await message.answer(f"Таймер создан {tid} на {minutes} мин, но канал не настроен")
+
+
+@router.callback_query(F.data.startswith("drop_remind:"))
+async def cb_drop_remind(cb: CallbackQuery):
+    try:
+        tid = int(cb.data.split(":")[1])
+    except Exception:
+        await cb.answer()
+        return
+    from app.models import DropReminder, DropTimer
+
+    async with SessionMaker() as s:
+        timer = await s.get(DropTimer, tid)
+        if not timer or not timer.is_active:
+            await cb.answer("Дроп уже прошёл", show_alert=True)
+            return
+        exists = (await s.scalars(select(DropReminder).where(DropReminder.user_id == cb.from_user.id, DropReminder.timer_id == tid))).first()
+        if exists:
+            await cb.answer("Уже напомним!", show_alert=True)
+            return
+        s.add(DropReminder(user_id=cb.from_user.id, timer_id=tid))
+        await s.commit()
+    await cb.answer("Напомню! 🔔", show_alert=True)
+    try:
+        await cb.message.answer("✅ Напомню о дропе — пришлю пуш когда выложим!")
+    except Exception:
+        pass
 
 
 @router.message(F.forward_origin)
@@ -396,12 +496,32 @@ async def cb_approve(cb: CallbackQuery):
         pass
     await cb.answer("Опубликовано ✅")
     await cb.message.answer(f"✅ Товар #{pid} опубликован в @{settings.shop_channel_username}")
-    # рассылка подписчикам дропов
+    # рассылка подписчикам дропов + бренда
     try:
         async with SessionMaker() as s2:
             p2 = await s2.get(Product, pid)
             title = p2.title if p2 else f"#{pid}"
-        await notify.notify_drop_subscribers(title, pid)
+            bid = p2.brand_id if p2 else None
+        await notify.notify_drop_subscribers(title, pid, bid)
+    except Exception:
+        pass
+    # напомнить тем кто жал Напомнить
+    try:
+        async with SessionMaker() as s3:
+            from app.models import DropReminder, DropTimer
+
+            timers = (await s3.scalars(select(DropTimer).where(DropTimer.is_active == True))).all()
+            for timer in timers:
+                rems = (await s3.scalars(select(DropReminder).where(DropReminder.timer_id == timer.id))).all()
+                for r in rems:
+                    try:
+                        await notify.shop_bot.send_message(
+                            r.user_id, f"🔥 Дроп <b>{timer.title}</b> уже тут! Новинка: {title} — смотри в канале @{settings.shop_channel_username}"
+                        )
+                    except Exception:
+                        pass
+                timer.is_active = False
+            await s3.commit()
     except Exception:
         pass
 

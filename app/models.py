@@ -257,3 +257,47 @@ class Review(Base):
     rating: Mapped[int] = mapped_column(Integer, default=5)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FortuneSpin(Base):
+    __tablename__ = "fortune_spins"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    prize: Mapped[str] = mapped_column(String(32))
+    value: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BoxSubscription(Base):
+    __tablename__ = "box_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    plan: Mapped[str] = mapped_column(String(16), default="monthly")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DropTimer(Base):
+    __tablename__ = "drop_timers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    drop_at: Mapped[datetime] = mapped_column(DateTime)
+    title: Mapped[str] = mapped_column(String(128), default="Новый дроп")
+    channel_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DropReminder(Base):
+    __tablename__ = "drop_reminders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    timer_id: Mapped[int] = mapped_column(ForeignKey("drop_timers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BrandSubscription(Base):
+    __tablename__ = "brand_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -130,6 +130,7 @@ footer .bar button{flex:1}
       <div id="mSizes" class="sizes-grid"></div>
       <div id="mDesc" style="color:var(--muted);font-size:13px;line-height:1.5;margin-top:10px"></div>
       <button id="mAdd" class="btn btn-accent" style="width:100%;margin-top:14px;padding:14px">В корзину</button>
+      <button id="mAR" class="btn btn-ghost" style="width:100%;margin-top:8px;display:none" onclick="openAR()">👟 AR примерка 360</button>
       <button class="btn btn-ghost" style="width:100%;margin-top:8px" onclick="closeModal()">Закрыть</button>
     </div>
   </div>
@@ -200,6 +201,9 @@ async function openProd(pid){
     document.getElementById('mBrand').textContent=p.brand||'';
     document.getElementById('mPrice').innerHTML=p.price+' <small style="color:var(--muted);font-weight:400">₽</small>';
     document.getElementById('mDesc').textContent='';
+    // AR для кроссовок
+    const isKross = p.sizes&&p.sizes.some(s=>/^\d/.test(s));
+    document.getElementById('mAR').style.display=isKross?'block':'none';
     // sizes
     const sg=document.getElementById('mSizes');sg.innerHTML='';
     if(p.sizes&&p.sizes.length){
@@ -222,6 +226,12 @@ async function openProd(pid){
     document.getElementById('mAdd').onclick=async()=>{await addToCart(p.id,currentSize);closeModal();};
     document.getElementById('prodModal').classList.add('open');
   }catch(e){toast('Не удалось открыть')}
+}
+function openAR(){
+  if(!currentProd||!currentProd.photos||!currentProd.photos.length){toast('Нет фото для 360');return;}
+  // 360 из фото Я.Диска — листай стрелками
+  toast('👟 360: листай фото стрелками');
+  document.getElementById('mImg').scrollIntoView({behavior:'smooth',block:'center'});
 }
 function closeModal(){document.getElementById('prodModal').classList.remove('open');}
 

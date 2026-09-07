@@ -54,16 +54,21 @@ def order_status_text(order) -> str:
     )
 
 
-async def notify_drop_subscribers(product_title: str, product_id: int) -> int:
+async def notify_drop_subscribers(product_title: str, product_id: int, brand_id: int | None = None) -> int:
     if shop_bot is None:
         return 0
     from app.db import SessionMaker
     from sqlalchemy import select
-    from app.models import DropSubscription
+    from app.models import BrandSubscription, DropSubscription
 
     async with SessionMaker() as s:
         subs = (await s.scalars(select(DropSubscription))).all()
-        ids = [sub.user_id for sub in subs]
+        ids = {sub.user_id for sub in subs}
+        # подписчики бренда тоже получают
+        if brand_id:
+            bsubs = (await s.scalars(select(BrandSubscription).where(BrandSubscription.brand_id == brand_id))).all()
+            for b in bsubs:
+                ids.add(b.user_id)
     if not ids:
         return 0
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
