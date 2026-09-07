@@ -571,6 +571,12 @@ async def cb_approve(cb: CallbackQuery):
             p.published_at = utcnow()
             s.add(AdminAudit(admin_id=cb.from_user.id, action="publish", entity="product", entity_id=pid))
             await s.commit()
+            try:
+                from app.services import retention as retention_svc
+
+                await retention_svc.check_stock_requests(s, p)
+            except Exception:
+                pass
         except Exception as e:
             await s.rollback()
             await cb.answer(f"Ошибка публикации: {e}", show_alert=True)
@@ -656,6 +662,14 @@ async def st_price(message: Message, state: FSMContext):
             p.retail_price = round(val)
             s.add(AdminAudit(admin_id=message.from_user.id, action="set_price", entity="product", entity_id=pid, payload={"price": round(val)}))
             await s.commit()
+            try:
+                from app.services import retention as retention_svc
+
+                n = await retention_svc.check_stock_requests(s, p)
+                if n:
+                    await message.answer(f"📩 Размер дождались {n} чел. — пуш отправлен.")
+            except Exception:
+                pass
     await message.answer(f"💰 Цена товара #{pid}: {round(val)} ₽")
     await send_admin_product(message.chat.id, pid)
 

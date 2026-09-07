@@ -152,6 +152,12 @@ async def support_message(message: Message, state: FSMContext):
         return
     if message.from_user.is_bot:
         return
+    # команда без entity (Telegram иногда шлёт /start как обычный текст) — обрабатываем как старт
+    if text.startswith("/"):
+        from app.bots.shop.menu import cmd_start
+
+        await cmd_start(message, state)
+        return
     # сначала пробуем как поиск, иначе — тикет в поддержку
     try:
         if await try_text_search(message):

@@ -144,6 +144,16 @@ async def run_all() -> None:
             log.info("Supplier watcher off (нет API_ID/HASH/сессии)")
     except Exception as e:
         log.warning("Supplier watcher disabled: %s", e)
+    # Дожим корзин + винбэк (только где живут боты)
+    if shop is not None:
+        try:
+            from app.services import retention as retention_svc
+
+            tasks.append(asyncio.create_task(retention_svc.abandoned_cart_loop()))
+            tasks.append(asyncio.create_task(retention_svc.winback_loop()))
+            log.info("Retention loops enabled")
+        except Exception as e:
+            log.warning("Retention disabled: %s", e)
     try:
         await asyncio.gather(*tasks)
     finally:

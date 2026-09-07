@@ -18,8 +18,9 @@ from app.models import (
     User,
     utcnow,
 )
+from app.services import retention as retention_svc
 
-BONUS_EARN_RATE = 0.01
+BONUS_EARN_RATE = 0.01  # базовый уровень, см. retention.earn_rate (уровни 1/3/5%)
 BONUS_SPEND_SHARE = 0.30
 REFERRAL_REWARD = 100
 ACTIVE_ORDER_STATUSES = ("awaiting_delivery", "awaiting_payment", "shipped")
@@ -112,7 +113,7 @@ async def preview_totals(session: AsyncSession, user: User, promo_code: str | No
         "bonus_max": bonus_max,
         "bonus_used": bonus_used,
         "total": round(total, 2),
-        "bonus_earned": math.floor(total * BONUS_EARN_RATE),
+        "bonus_earned": retention_svc.bonus_for_total(total, user.total_spent),
     }
 
 
@@ -134,7 +135,7 @@ async def create_order(session: AsyncSession, user: User, data: dict):
         total=round(total, 2),
         promo_code=promo.code if promo else None,
         bonus_used=bonus_used,
-        bonus_earned=math.floor(total * BONUS_EARN_RATE),
+        bonus_earned=retention_svc.bonus_for_total(total, user.total_spent),
         full_name=(data.get("full_name") or "")[:120],
         phone=(data.get("phone") or "")[:30],
         city=(data.get("city") or "")[:60],

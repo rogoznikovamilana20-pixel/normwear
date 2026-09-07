@@ -11,7 +11,8 @@ from app.db import SessionMaker
 from app.models import BoxSubscription, Brand, CartItem, FortuneSpin, Order, Payment, Product, ProductPhoto, PromoCode, SupportMessage, SupportTicket, User
 from app.services import notify, orders
 from app.services.photos import yandex_library
-from app.bots.shop import Checkout, MENU, ReviewFSM, WELCOME, cancel_kb, main_menu, menu_inline, miniapp_available, pending_review, router, send_menu, settings
+from app.bots.shop import Checkout, MENU, ReviewFSM, StockReq, WELCOME, cancel_kb, main_menu, menu_inline, miniapp_available, pending_review, pending_stock_product, router, send_menu, settings
+from app.bots.shop.cart import render_cart
 
 async def send_brands(target: Message):
     async with SessionMaker() as s:
@@ -144,6 +145,7 @@ async def cb_product(cb: CallbackQuery):
     rows = []
     for i in range(0, len(sizes), 4):
         rows.append([InlineKeyboardButton(text=sizes[j], callback_data=f"add:{pid}:{j}") for j in range(i, min(i + 4, len(sizes)))])
+    rows.append([InlineKeyboardButton(text="🤍 В избранное", callback_data=f"fav:{pid}"), InlineKeyboardButton(text="📩 Нет моего размера", callback_data=f"streq:{pid}")])
     rows.append([InlineKeyboardButton(text="🏠 Каталог", callback_data="cat"), InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     # file_id из форварда валиден только для admin-бота, shop-бот должен использовать только Yandex href
@@ -198,6 +200,92 @@ async def cb_add(cb: CallbackQuery):
             s.add(CartItem(user_id=cb.from_user.id, product_id=pid, size=size))
             await s.commit()
     await cb.answer("✅ Добавлено в корзину")
+
+
+@router.callback_query(F.data.startswith("fav:"))
+async def cb_fav(cb: CallbackQuery):
+    pid = int(cb.data.split(":")[1])
+    from app.models import Favorite
+
+    async with SessionMaker() as s:
+        p = await s.get(Product, pid)
+        if p is None or p.status != "published":
+            await cb.answer("Товар недоступен", show_alert=True)
+            return
+        exists = (
+            await s.scalars(select(Favorite).where(Favorite.user_id == cb.from_user.id, Favorite.product_id == pid))
+        ).first()
+        if exists:
+            await s.delete(exists)
+            await s.commit()
+            await cb.answer("Убрал из избранного")
+        else:
+            s.add(Favorite(user_id=cb.from_user.id, product_id=pid))
+            await s.commit()
+            await cb.answer("🤍 В избранном! Смотри в ☰ Меню → Избранное")
+
+
+@router.callback_query(F.data == "m_fav")
+async def cb_m_fav(cb: CallbackQuery):
+    from app.models import Favorite
+
+    async with SessionMaker() as s:
+        favs = (
+            await s.scalars(select(Favorite).where(Favorite.user_id == cb.from_user.id).order_by(Favorite.id.desc()).limit(10))
+        ).all()
+        rows = []
+        for f in favs:
+            p = await s.get(Product, f.product_id)
+            if p is None or p.status != "published":
+                continue
+            rows.append([InlineKeyboardButton(text=f"{p.title[:30]} · {int(p.retail_price or 0)}₽", callback_data=f"pr:{p.id}")])
+    if not rows:
+        await cb.message.answer("Избранное пусто — жми 🤍 на карточке товара.", reply_markup=main_menu())
+    else:
+        rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="home")])
+        await cb.message.answer("🤍 <b>Избранное</b>:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("streq:"))
+async def cb_stock_req(cb: CallbackQuery, state: FSMContext):
+    pid = int(cb.data.split(":")[1])
+    async with SessionMaker() as s:
+        p = await s.get(Product, pid)
+        if p is None:
+            await cb.answer("Товар не найден", show_alert=True)
+            return
+        sizes = ", ".join(str(x) for x in (p.sizes or [])) or "—"
+    pending_stock_product[cb.from_user.id] = pid
+    await state.set_state(StockReq.size)
+    await cb.message.answer(f"📩 Какой размер нужен? Сейчас есть: {html.escape(sizes)}\nНапиши размер одним сообщением (или «-» чтобы следить за любым).")
+    await cb.answer()
+
+
+@router.message(StockReq.size, F.text)
+async def st_stock_size(message: Message, state: FSMContext):
+    from app.models import StockRequest
+
+    pid = pending_stock_product.get(message.from_user.id)
+    size = (message.text or "").strip()[:16]
+    await state.clear()
+    pending_stock_product.pop(message.from_user.id, None)
+    if pid is None or not size:
+        return
+    if size == "-":
+        size = ""
+    async with SessionMaker() as s:
+        exists = (
+            await s.scalars(
+                select(StockRequest).where(
+                    StockRequest.user_id == message.from_user.id, StockRequest.product_id == pid, StockRequest.size == size, StockRequest.notified == False  # noqa: E712
+                )
+            )
+        ).first()
+        if exists is None:
+            s.add(StockRequest(user_id=message.from_user.id, product_id=pid, size=size))
+            await s.commit()
+    await message.answer("📩 Записал! Пришлю пуш как только размер появится.", reply_markup=main_menu())
 
 
 @router.callback_query(F.data.startswith("ci:"))

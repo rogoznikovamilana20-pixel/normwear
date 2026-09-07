@@ -51,6 +51,16 @@ class TestStylist(unittest.TestCase):
         self.assertIn("white", product_colors("Bape Sta Low White"))
         self.assertIn("black", product_colors("Худи черное оверсайз"))
 
+    def test_tiers(self):
+        from app.services.retention import bonus_for_total, earn_rate, tier_name
+
+        self.assertEqual(earn_rate(0), 0.01)
+        self.assertEqual(earn_rate(20000), 0.03)
+        self.assertEqual(earn_rate(100000), 0.05)
+        self.assertEqual(bonus_for_total(10000, 0), 100)
+        self.assertEqual(bonus_for_total(10000, 50000), 500)
+        self.assertEqual(tier_name(0), "Старт 1%")
+
     def test_photo_color_family(self):
         from app.services.stylist import photo_color_family
 

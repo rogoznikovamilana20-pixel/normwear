@@ -277,6 +277,32 @@ class BoxSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Favorite(Base):
+    __tablename__ = "favorites"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class StockRequest(Base):
+    __tablename__ = "stock_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    size: Mapped[str] = mapped_column(String(16), default="")
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class RetentionPing(Base):
+    __tablename__ = "retention_pings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # cart / winback
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class DropTimer(Base):
     __tablename__ = "drop_timers"
     id: Mapped[int] = mapped_column(primary_key=True)

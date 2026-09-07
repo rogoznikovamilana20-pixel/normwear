@@ -64,7 +64,8 @@ def menu_inline() -> InlineKeyboardMarkup:
     rows += [
         [InlineKeyboardButton(text="📦 Мои заказы", callback_data="m_orders"), InlineKeyboardButton(text="🎁 Бонусы", callback_data="m_bonus")],
         [InlineKeyboardButton(text="🔔 Дропы", callback_data="m_drops"), InlineKeyboardButton(text="🎡 Колесо", callback_data="m_wheel")],
-        [InlineKeyboardButton(text="📦 BOX", callback_data="m_box"), InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
+        [InlineKeyboardButton(text="📦 BOX", callback_data="m_box"), InlineKeyboardButton(text="🤍 Избранное", callback_data="m_fav")],
+        [InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -90,7 +91,12 @@ class ReviewFSM(StatesGroup):
     text = State()
 
 
+class StockReq(StatesGroup):
+    size = State()
+
+
 pending_review: dict[int, int] = {}
+pending_stock_product: dict[int, int] = {}
 
 
 

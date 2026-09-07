@@ -14,15 +14,28 @@ from app.services.photos import yandex_library
 from app.bots.shop import Checkout, MENU, ReviewFSM, WELCOME, cancel_kb, main_menu, menu_inline, miniapp_available, pending_review, router, send_menu, settings
 
 async def send_bonuses(message: Message):
+    from app.services import retention as retention_svc
+
     async with SessionMaker() as s:
         user = await s.get(User, message.from_user.id)
     points = user.bonus_points if user else 0
+    spent = user.total_spent if user else 0
+    tier = retention_svc.tier_name(spent)
+    rate = retention_svc.earn_rate(spent)
+    if rate < 0.03:
+        nxt = f"До уровня Про 3% осталось {int(20000 - spent)}₽ выкупа"
+    elif rate < 0.05:
+        nxt = f"До уровня VIP 5% осталось {int(50000 - spent)}₽ выкупа"
+    else:
+        nxt = "У тебя максимальный уровень VIP 5% 🔥"
     link = f"https://t.me/{settings.shop_username}?start=ref_{message.from_user.id}"
     await message.answer(
         f"🎁 <b>Бонусная программа</b>\n\n"
-        f"Ваш баланс: <b>{points} бонусов</b>\n\n"
-        f"• 1% от покупки возвращается бонусами (1 бонус = 1 ₽)\n"
-        f"• Бонусами можно оплатить до 30% заказа\n\n"
+        f"Ваш баланс: <b>{points} бонусов</b>\n"
+        f"Твой уровень: <b>{tier}</b>\n{nxt}\n\n"
+        f"• Кэшбэк бонусами с каждой покупки (1 бонус = 1 ₽)\n"
+        f"• Бонусами можно оплатить до 30% заказа\n"
+        f"• Уровни: Старт 1% → Про 3% (от 20к) → VIP 5% (от 50к)\n\n"
         f"👥 <b>Приведи друга</b>\n"
         f"Отправь другу ссылку:\n{link}\n"
         f"Друг сделает первый заказ — получишь <b>+100 бонусов</b>",
