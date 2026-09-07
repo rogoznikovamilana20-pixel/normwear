@@ -6,4 +6,6 @@ __pycache__/
 logs/
 cloudflared.exe
 logs/*.log
+data/supplier/
+data/vosk/
 
