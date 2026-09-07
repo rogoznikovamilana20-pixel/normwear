@@ -32,6 +32,13 @@ async def init_db() -> None:
         cols = await conn.run_sync(_product_columns)
         if cols and "brand_id" not in cols:
             log.warning("Старая схема products%s — пересоздаю все таблицы", sorted(cols))
-            await conn.run_sync(Base.metadata.drop_all)
+            if conn.dialect.name == "postgresql":
+                from sqlalchemy import text
+
+                # старые таблицы (market_snapshots, favorites, source_posts) держат FK на products
+                await conn.execute(text("DROP SCHEMA public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+            else:
+                await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
             log.warning("Схема пересоздана")
