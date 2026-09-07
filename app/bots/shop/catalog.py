@@ -146,6 +146,7 @@ async def cb_product(cb: CallbackQuery):
     for i in range(0, len(sizes), 4):
         rows.append([InlineKeyboardButton(text=sizes[j], callback_data=f"add:{pid}:{j}") for j in range(i, min(i + 4, len(sizes)))])
     rows.append([InlineKeyboardButton(text="🤍 В избранное", callback_data=f"fav:{pid}"), InlineKeyboardButton(text="📩 Нет моего размера", callback_data=f"streq:{pid}")])
+    rows.append([InlineKeyboardButton(text="🔒 Забронировать размер за 199₽", callback_data=f"res:{pid}")])
     rows.append([InlineKeyboardButton(text="🏠 Каталог", callback_data="cat"), InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     # file_id из форварда валиден только для admin-бота, shop-бот должен использовать только Yandex href
@@ -244,6 +245,72 @@ async def cb_m_fav(cb: CallbackQuery):
     else:
         rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="home")])
         await cb.message.answer("🤍 <b>Избранное</b>:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("res:"))
+async def cb_reserve(cb: CallbackQuery):
+    from datetime import timedelta
+
+    from app.models import Reservation, utcnow
+
+    parts = cb.data.split(":")
+    pid = int(parts[1])
+    idx = int(parts[2]) if len(parts) > 2 else -1
+    async with SessionMaker() as s:
+        p = await s.get(Product, pid)
+        if p is None or p.status != "published":
+            await cb.answer("Товар недоступен", show_alert=True)
+            return
+        sizes = [str(x) for x in (p.sizes or [])]
+        if idx < 0:
+            if not sizes:
+                await cb.answer("Безразмерный товар — просто кидай в корзину", show_alert=True)
+                return
+            rows = []
+            for i in range(0, len(sizes), 4):
+                rows.append([InlineKeyboardButton(text=sizes[j], callback_data=f"res:{pid}:{j}") for j in range(i, min(i + 4, len(sizes)))])
+            await cb.message.answer(f"🔒 <b>Бронь 199₽</b> — {html.escape(p.title)}\nВыбери размер, бронь держится 24 часа и идёт в зачёт заказа:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer()
+            return
+        size = sizes[idx] if idx < len(sizes) else ""
+        # одна активная бронь на товар+размер
+        exists = (
+            await s.scalars(
+                select(Reservation).where(
+                    Reservation.user_id == cb.from_user.id, Reservation.product_id == pid, Reservation.size == size, Reservation.status.in_(("pending", "active"))
+                )
+            )
+        ).first()
+        if exists:
+            await cb.answer("У тебя уже есть бронь на этот размер", show_alert=True)
+            return
+        res = Reservation(
+            user_id=cb.from_user.id, product_id=pid, size=size, amount=199, status="pending",
+            expires_at=utcnow() + timedelta(hours=24),
+        )
+        s.add(res)
+        await s.flush()
+        rid = res.id
+        await s.commit()
+    from app.services import payments as payments_svc
+
+    if payments_svc.is_configured(settings) and notify.shop_bot is not None:
+        ok = await payments_svc.send_reserve_invoice(notify.shop_bot, settings, cb.from_user.id, rid, p.title, size)
+        if ok:
+            await cb.message.answer("💳 Счёт на бронь 199₽ отправлен — оплати в этом чате, держу размер 24 часа.")
+            await cb.answer()
+            return
+    # ручной режим — бронь активна сразу, менеджер подтвердит 199₽
+    async with SessionMaker() as s:
+        from app.models import Reservation as _R
+
+        r = await s.get(_R, rid)
+        if r is not None:
+            r.status = "active"
+            await s.commit()
+    await notify.notify_admins(f"🔒 <b>Новая бронь #{rid}</b> — {html.escape(p.title)} · {size} · user <code>{cb.from_user.id}</code>. Подтверди 199₽.")
+    await cb.message.answer("🔒 Размер забронирован на 24 часа! 199₽ идут в зачёт заказа. Менеджер подтвердит оплату.")
     await cb.answer()
 
 

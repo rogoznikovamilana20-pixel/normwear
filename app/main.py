@@ -154,6 +154,7 @@ async def run_all() -> None:
 
             tasks.append(asyncio.create_task(retention_svc.abandoned_cart_loop()))
             tasks.append(asyncio.create_task(retention_svc.winback_loop()))
+            tasks.append(asyncio.create_task(retention_svc.reservation_sweep_loop()))
             log.info("Retention loops enabled")
         except Exception as e:
             log.warning("Retention disabled: %s", e)

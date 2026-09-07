@@ -303,6 +303,19 @@ class RetentionPing(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Reservation(Base):
+    __tablename__ = "reservations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    size: Mapped[str] = mapped_column(String(16), default="")
+    amount: Mapped[int] = mapped_column(Integer, default=199)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/active/used/expired
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class DropTimer(Base):
     __tablename__ = "drop_timers"
     id: Mapped[int] = mapped_column(primary_key=True)

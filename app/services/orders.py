@@ -106,15 +106,37 @@ async def preview_totals(session: AsyncSession, user: User, promo_code: str | No
         discount = 0.0
     cats = {p.category_id for _, p in items if p.category_id}
     bundle = round((subtotal - discount) * BUNDLE_DISCOUNT, 2) if len(cats) >= BUNDLE_CATEGORIES else 0.0
+    # зачёт активной брони 199₽ (одна бронь на заказ)
+    reserve_discount = 0
+    try:
+        from app.models import Reservation
+
+        for ci, p in items:
+            r = (
+                await session.scalars(
+                    select(Reservation).where(
+                        Reservation.user_id == user.id,
+                        Reservation.product_id == p.id,
+                        Reservation.size == ci.size,
+                        Reservation.status == "active",
+                    )
+                )
+            ).first()
+            if r is not None:
+                reserve_discount = min(r.amount or 199, subtotal - discount - bundle)
+                break
+    except Exception:
+        reserve_discount = 0
     bonus_available = user.bonus_points or 0
     bonus_max = min(bonus_available, math.floor(subtotal * BONUS_SPEND_SHARE)) if subtotal else 0
     bonus_used = bonus_max if use_bonus else 0
-    total = max(0.0, subtotal - discount - bundle - bonus_used)
+    total = max(0.0, subtotal - discount - bundle - reserve_discount - bonus_used)
     return {
         "items": items,
         "subtotal": round(subtotal, 2),
         "discount": discount,
         "bundle": bundle,
+        "reserve_discount": reserve_discount,
         "promo_error": promo_error if promo_code else None,
         "bonus_available": bonus_available,
         "bonus_max": bonus_max,
@@ -134,7 +156,8 @@ async def create_order(session: AsyncSession, user: User, data: dict):
         discount = 0.0
     bonus_used = totals["bonus_used"]
     bundle = totals.get("bundle", 0.0)
-    total = max(0.0, totals["subtotal"] - discount - bundle - bonus_used)
+    reserve_discount = totals.get("reserve_discount", 0)
+    total = max(0.0, totals["subtotal"] - discount - bundle - reserve_discount - bonus_used)
     order = Order(
         user_id=user.id,
         status="awaiting_delivery",
@@ -196,6 +219,24 @@ async def create_order(session: AsyncSession, user: User, data: dict):
         user.bonus_points = max(0, (user.bonus_points or 0) - bonus_used)
         session.add(LoyaltyTransaction(user_id=user.id, order_id=order.id, points=-bonus_used, kind="spend", note=f"Списание за заказ №{order.id}"))
     user.orders_count = (user.orders_count or 0) + 1
+    # гасим использованную бронь
+    try:
+        from app.models import Reservation as _Res
+
+        for ci, p in totals["items"]:
+            r = (
+                await session.scalars(
+                    select(_Res).where(
+                        _Res.user_id == user.id, _Res.product_id == p.id, _Res.size == ci.size, _Res.status == "active"
+                    )
+                )
+            ).first()
+            if r is not None:
+                r.status = "used"
+                r.order_id = order.id
+                break
+    except Exception:
+        pass
     await session.execute(delete(CartItem).where(CartItem.user_id == user.id))
     await session.commit()
     return order, None

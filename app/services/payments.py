@@ -32,6 +32,27 @@ async def send_order_invoice(bot, settings, order, items_text: str = "") -> bool
         return False
 
 
+async def send_reserve_invoice(bot, settings, user_id: int, rid: int, title: str, size: str) -> bool:
+    if not is_configured(settings):
+        return False
+    from aiogram.types import LabeledPrice
+
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title=f"Бронь размера — {title[:40]}",
+            description=f"Размер {size or '—'}. Держим 24 часа, 199₽ идут в зачёт заказа.",
+            payload=f"res:{rid}",
+            provider_token=settings.telegram_payment_provider_token,
+            currency="RUB",
+            prices=[LabeledPrice(label="Бронь 24ч", amount=19900)],
+        )
+        return True
+    except Exception as e:
+        log.warning("reserve invoice failed: %s", e)
+        return False
+
+
 async def send_box_invoice(bot, settings, user_id: int) -> bool:
     if not is_configured(settings):
         return False

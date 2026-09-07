@@ -134,6 +134,8 @@ async def show_summary(target: Message, state: FSMContext):
         lines.append(f"🎟 Промокод {d.get('promo_code')}: −{int(totals['discount'])} ₽")
     if totals.get("bundle"):
         lines.append(f"👔 Комплект (2+ категории): −{int(totals['bundle'])} ₽")
+    if totals.get("reserve_discount"):
+        lines.append(f"🔒 Бронь в зачёт: −{int(totals['reserve_discount'])} ₽")
     if totals["bonus_used"]:
         lines.append(f"🎁 Бонусы: −{totals['bonus_used']} ₽")
     if totals.get("promo_error"):
@@ -254,6 +256,26 @@ async def on_successful_payment(message: Message):
                 await s.commit()
             await message.answer(f"✅ Оплата заказа №{oid} прошла! Менеджер свяжется по доставке.", reply_markup=main_menu())
             await notify.notify_admins(f"💰 <b>Заказ №{oid} ОПЛАЧЕН</b> ({float(pay.total_amount)/100:.0f}₽). Можно отправлять: введите трек.")
+        elif kind == "res":
+            from datetime import timedelta
+
+            from app.models import Reservation, utcnow
+
+            try:
+                rid = int(ref)
+            except ValueError:
+                return
+            async with SessionMaker() as s:
+                r = await s.get(Reservation, rid)
+                if r is None or r.user_id != message.from_user.id:
+                    return
+                r.status = "active"
+                r.expires_at = utcnow() + timedelta(hours=24)
+                await s.commit()
+                p = await s.get(Product, r.product_id)
+                title = p.title if p else f"#{r.product_id}"
+            await message.answer(f"🔒 Бронь оплачена! Размер {r.size or '—'} ({html.escape(title)}) держу 24 часа, 199₽ пойдут в зачёт заказа.", reply_markup=main_menu())
+            await notify.notify_admins(f"🔒 <b>Бронь #{rid} ОПЛАЧЕНА</b> — {html.escape(title)} · {r.size} · user <code>{r.user_id}</code>.")
         elif kind == "box":
             from app.models import LoyaltyTransaction
 

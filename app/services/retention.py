@@ -141,6 +141,32 @@ async def winback_loop() -> None:
             log.warning("winback loop: %s", e)
 
 
+async def reservation_sweep_loop() -> None:
+    from sqlalchemy import select
+
+    from app.db import SessionMaker
+    from app.models import Reservation, utcnow
+
+    while True:
+        try:
+            await asyncio.sleep(60 * 60)
+            async with SessionMaker() as s:
+                old = (
+                    await s.scalars(
+                        select(Reservation).where(Reservation.status.in_(("pending", "active")), Reservation.expires_at < utcnow())
+                    )
+                ).all()
+                for r in old:
+                    r.status = "expired"
+                if old:
+                    await s.commit()
+                    log.info("expired %d reservations", len(old))
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("reserve sweep: %s", e)
+
+
 async def check_stock_requests(session, product) -> int:
     """Уведомить ждущих размер. Возвращает число уведомлений."""
     from sqlalchemy import select
