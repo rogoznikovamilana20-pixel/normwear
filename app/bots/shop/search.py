@@ -158,6 +158,17 @@ async def support_message(message: Message, state: FSMContext):
 
         await cmd_start(message, state)
         return
+    # FAQ вперёд: частые вопросы отвечаем сразу, тикет только по кнопке
+    try:
+        from app.bots.shop.faq import match_faq, pending_faq, send_faq_answer
+
+        key = match_faq(text)
+        if key:
+            pending_faq[message.from_user.id] = text
+            await send_faq_answer(message, key)
+            return
+    except Exception:
+        pass
     # сначала пробуем как поиск, иначе — тикет в поддержку
     try:
         if await try_text_search(message):

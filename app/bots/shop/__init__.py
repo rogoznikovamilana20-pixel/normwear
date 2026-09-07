@@ -15,7 +15,8 @@ WELCOME = (
     "Стритвир и кроссовки топовых брендов.\n"
     "💰 Честные цены · 🚚 Доставка 2–4 дня · ✅ Проверка перед отправкой\n"
     "\n"
-    "Выбирай раздел внизу и собирай корзину. Бонусы начисляются с каждого заказа."
+    "Выбирай раздел внизу и собирай корзину. Бонусы начисляются с каждого заказа.\n"
+    "❓ Вопросы — команда /faq."
 )
 
 
@@ -65,7 +66,7 @@ def menu_inline() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📦 Мои заказы", callback_data="m_orders"), InlineKeyboardButton(text="🎁 Бонусы", callback_data="m_bonus")],
         [InlineKeyboardButton(text="🔔 Дропы", callback_data="m_drops"), InlineKeyboardButton(text="🎡 Колесо", callback_data="m_wheel")],
         [InlineKeyboardButton(text="📦 BOX", callback_data="m_box"), InlineKeyboardButton(text="🤍 Избранное", callback_data="m_fav")],
-        [InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
+        [InlineKeyboardButton(text="❓ FAQ", callback_data="m_faq"), InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -106,3 +107,4 @@ from app.bots.shop import loyalty as _loyalty  # noqa: F401
 from app.bots.shop import reviews as _reviews  # noqa: F401
 from app.bots.shop import search as _search  # noqa: F401
 from app.bots.shop import menu as _menu  # noqa: F401
+from app.bots.shop import faq as _faq  # noqa: F401

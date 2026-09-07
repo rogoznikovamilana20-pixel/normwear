@@ -46,9 +46,14 @@ def create_app() -> FastAPI:
         return [{"id": r[0], "title": r[1], "count": r[2]} for r in rows]
 
     @app.get("/api/catalog")
-    async def api_catalog(brand: int | None = None, page: int = 0):
+    async def api_catalog(brand: int | None = None, page: int = 0, sort: str = "new"):
         page = max(0, page)
-        q = select(Product).where(Product.status == "published").order_by(Product.id.desc())
+        order = Product.id.desc()
+        if sort == "price_asc":
+            order = Product.retail_price.asc()
+        elif sort == "price_desc":
+            order = Product.retail_price.desc()
+        q = select(Product).where(Product.status == "published").order_by(order)
         if brand:
             q = q.where(Product.brand_id == brand)
         async with SessionMaker() as s:
@@ -134,6 +139,29 @@ def create_app() -> FastAPI:
                 total += price * ci.qty
                 out.append({"cart_id": ci.id, "product_id": p.id, "title": p.title, "price": price, "size": ci.size, "qty": ci.qty})
         return {"items": out, "total": total, "count": len(out)}
+
+    @app.get("/api/orders")
+    async def api_my_orders(user_id: int):
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id required")
+        from app.models import Order
+
+        labels = {
+            "awaiting_delivery": "Ждёт поступления",
+            "awaiting_payment": "К оплате",
+            "shipped": "Отправлен",
+            "delivered": "Доставлен",
+            "completed": "Завершён",
+            "cancelled": "Отменён",
+        }
+        async with SessionMaker() as s:
+            ords = (
+                await s.scalars(select(Order).where(Order.user_id == user_id).order_by(Order.id.desc()).limit(10))
+            ).all()
+        return [
+            {"id": o.id, "status": o.status, "label": labels.get(o.status, o.status), "total": int(o.total), "date": o.created_at.strftime("%d.%m.%Y") if o.created_at else ""}
+            for o in ords
+        ]
 
     @app.delete("/api/cart/{cart_id}")
     async def api_del_cart(cart_id: int, user_id: int):

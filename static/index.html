@@ -80,6 +80,14 @@ footer .bar button{flex:1}
   </div>
   <div class="sub">Стритвир и кроссовки · доставка 2–4 дня · примерка перед оплатой</div>
   <div class="search"><input id="q" placeholder="Поиск — Nike, Bape, худи..." oninput="onSearch()"></div>
+  <div style="display:flex;gap:8px;padding:0 16px 4px">
+    <select id="sort" onchange="onSort()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px;font-size:13px">
+      <option value="new">Сначала новые</option>
+      <option value="price_asc">Дешевле</option>
+      <option value="price_desc">Дороже</option>
+    </select>
+    <button onclick="openOrders()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px;font-size:13px;cursor:pointer">📦 Мои заказы</button>
+  </div>
   <div class="chips" id="chips"></div>
 </header>
 
@@ -119,6 +127,14 @@ footer .bar button{flex:1}
   </div>
 </div>
 
+<div id="ordersPage" style="display:none">
+  <div style="padding:16px">
+    <h3 style="font-size:18px;margin-bottom:12px">📦 Мои заказы</h3>
+    <div id="ordersList"></div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:10px" onclick="showPage('grid')">← К каталогу</button>
+  </div>
+</div>
+
 <div class="modal" id="prodModal" onclick="if(event.target===this)closeModal()">
   <div class="modal-bg"></div>
   <div class="modal-box">
@@ -142,7 +158,7 @@ footer .bar button{flex:1}
 <script>
 const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if(tg){tg.ready();tg.expand();}
-let shopUsername='norm_shop_bot', brand=null, page=0, pages=0, q='';
+let shopUsername='norm_shop_bot', brand=null, page=0, pages=0, q='', sort='new';
 let cartCount=0,cartTotal=0, previewData=null, currentProd=null, currentSize='', promoApplied='';
 const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null;
 
@@ -160,10 +176,38 @@ async function loadBrands(){
 }
 function selectBrand(id,el){brand=id;page=0;document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));if(el)el.classList.add('active');loadCatalog();}
 function onSearch(){q=document.getElementById('q').value.trim().toLowerCase();loadCatalog();}
+function onSort(){sort=document.getElementById('sort').value;page=0;loadCatalog();}
+
+async function openOrders(){
+  if(!userId){toast('Открой из бота 🤖');return;}
+  try{
+    const r=await fetch('/api/orders?user_id='+userId);const list=await r.json();
+    const box=document.getElementById('ordersList');box.innerHTML='';
+    if(!list.length) box.innerHTML='<div class="empty">Заказов пока нет — загляни в каталог 😉</div>';
+    for(const o of list){
+      const el=document.createElement('div');el.className='cart-item';
+      el.innerHTML='<div style="flex:1"><div style="font-weight:700">Заказ №'+o.id+'</div><div style="color:var(--muted);font-size:12px">'+esc(o.label)+' · '+o.total+'₽ · '+esc(o.date)+'</div></div>';
+      box.appendChild(el);
+    }
+    showPage('ordersPage');
+  }catch(e){toast('Не удалось загрузить');}
+}
+function showPage(id){
+  const catalog = (id==='grid');
+  document.getElementById('grid').style.display=catalog?'grid':'none';
+  document.getElementById('pager').style.display=catalog?'flex':'none';
+  document.getElementById('chips').style.display=catalog?'flex':'none';
+  document.querySelector('.search').style.display=catalog?'block':'none';
+  document.getElementById('cartPage').style.display=(id==='cartPage')?'block':'none';
+  document.getElementById('ordersPage').style.display=(id==='ordersPage')?'block':'none';
+  document.getElementById('empty').style.display='none';
+  if(catalog) loadCatalog();
+  if(tg&&tg.BackButton){if(catalog)tg.BackButton.hide();else tg.BackButton.show();}
+}
 
 async function loadCatalog(){
   const grid=document.getElementById('grid');grid.innerHTML='';
-  const r=await fetch('/api/catalog?brand='+(brand||'')+'&page='+page);
+  const r=await fetch('/api/catalog?brand='+(brand||'')+'&page='+page+'&sort='+sort);
   const j=await r.json();pages=j.pages||0;
   let items=j.items||[];
   if(q) items=items.filter(p=>p.title.toLowerCase().includes(q));

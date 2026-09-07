@@ -34,7 +34,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("main")
 
-SHOP_COMMANDS = [BotCommand(command="start", description="Магазин NORMWEAR")]
+SHOP_COMMANDS = [
+    BotCommand(command="start", description="Магазин NORMWEAR"),
+    BotCommand(command="faq", description="Частые вопросы"),
+]
 ADMIN_COMMANDS = [
     BotCommand(command="admin", description="Панель управления"),
     BotCommand(command="orders", description="Активные заказы"),
