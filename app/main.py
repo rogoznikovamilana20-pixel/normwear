@@ -133,6 +133,17 @@ async def run_all() -> None:
             log.error("Admin bot get_me failed: %s", e)
         tasks.append(asyncio.create_task(d_shop.start_polling(shop, handle_signals=False)))
         tasks.append(asyncio.create_task(d_admin.start_polling(admin, handle_signals=False)))
+    # Фаза 9: автопарсинг поставщика (не блокирует старт, рестартует сам)
+    try:
+        from app.services import supplier_watcher
+
+        if supplier_watcher.is_configured(settings):
+            tasks.append(asyncio.create_task(supplier_watcher.run_forever(settings, admin_module.process_supplier_auto)))
+            log.info("Supplier watcher enabled: @%s", settings.supplier_channel_username)
+        else:
+            log.info("Supplier watcher off (нет API_ID/HASH/сессии)")
+    except Exception as e:
+        log.warning("Supplier watcher disabled: %s", e)
     try:
         await asyncio.gather(*tasks)
     finally:

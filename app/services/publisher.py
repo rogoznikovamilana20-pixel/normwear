@@ -3,7 +3,7 @@ import html
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram import Bot
-from aiogram.types import InputMediaPhoto
+from aiogram.types import FSInputFile, InputMediaPhoto
 
 from app.config import Settings
 from app.models import Brand, ChannelPost, Product, ProductPhoto
@@ -34,9 +34,13 @@ async def collect_media(session: AsyncSession, product: Product, library: Yandex
     rows = (await session.scalars(
         select(ProductPhoto).where(ProductPhoto.product_id == product.id).order_by(ProductPhoto.position)
     )).all()
+    import os
+
     supplier = [r.url for r in rows if r.source == "supplier"]
     yandex = [r.url for r in rows if r.source == "yandex"]
+    local = [r.url for r in rows if r.source == "local" and isinstance(r.url, str) and os.path.exists(r.url)]
     chosen: list[str] = []
+    local_chosen: list[str] = []
     if product.photo_mode == "yandex":
         for path in yandex[:10]:
             try:
@@ -45,17 +49,21 @@ async def collect_media(session: AsyncSession, product: Product, library: Yandex
                     chosen.append(href)
             except Exception:
                 continue
-        chosen.extend(supplier[: max(0, 10 - len(chosen))])
+        local_chosen.extend(local[: max(0, 10 - len(chosen))])
+        chosen.extend(supplier[: max(0, 10 - len(chosen) - len(local_chosen))])
     else:
         chosen.extend(supplier[:10])
-        for path in yandex[: max(0, 10 - len(chosen))]:
+        local_chosen.extend(local[: max(0, 10 - len(chosen))])
+        for path in yandex[: max(0, 10 - len(chosen) - len(local_chosen))]:
             try:
                 href = await library.download_url(path)
                 if href:
                     chosen.append(href)
             except Exception:
                 continue
-    return [InputMediaPhoto(media=u) for u in chosen]
+    media = [InputMediaPhoto(media=u) for u in chosen]
+    media += [InputMediaPhoto(media=FSInputFile(p)) for p in local_chosen]
+    return media
 
 
 async def publish_product(bot: Bot, session: AsyncSession, product: Product, library: YandexLibrary, settings: Settings) -> int | None:

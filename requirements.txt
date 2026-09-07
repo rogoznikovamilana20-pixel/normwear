@@ -9,3 +9,7 @@ pydantic-settings==2.5.2
 httpx==0.27.2
 aiohttp-socks==0.9.0
 redis==5.0.5  # опционально для FSM, без него fallback на MemoryStorage
+telethon==1.44.0  # фаза 9: автопарсинг поставщика
+pillow==12.3.0  # стилист по фото (цвет), голосовые файлы
+vosk==0.3.45  # голосовой поиск офлайн (ru-small)
+imageio-ffmpeg==0.6.0  # ogg->wav для Vosk

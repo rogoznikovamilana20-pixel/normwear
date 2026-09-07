@@ -146,7 +146,21 @@ async def cb_order(cb: CallbackQuery, state: FSMContext):
         await cb.message.answer("📮 Введите трек-номер:")
         await cb.answer()
         return
-    if action == "next":
+    if action == "pay":
+        from app.models import OrderItem as _OI
+        from app.services import payments as payments_svc
+
+        async with SessionMaker() as s:
+            order = await s.get(Order, oid)
+            if order is None:
+                await cb.answer("Заказ не найден", show_alert=True)
+                return
+            items = (await s.scalars(select(_OI).where(_OI.order_id == oid))).all()
+            items_text = ", ".join(f"{it.title}×{it.qty}" for it in items)[:200]
+        bot = notify.shop_bot
+        ok = await payments_svc.send_order_invoice(bot, settings, order, items_text) if bot else False
+        await send_order_card(cb.message, oid, note="Счёт отправлен клиенту" if ok else "Провайдер оплаты не настроен — кидай реквизиты вручную")
+    elif action == "next":
         async with SessionMaker() as s:
             order = await orders.advance_order(s, oid, changed_by=cb.from_user.id)
         if order is not None:
@@ -193,6 +207,10 @@ async def send_order_card(target: Message, order_id: int, note: str | None = Non
     if order.status == "awaiting_delivery":
         rows.append([InlineKeyboardButton(text="➡ Готов к оплате", callback_data=f"od:{order.id}:next")])
     elif order.status == "awaiting_payment":
+        from app.services import payments as payments_svc
+
+        if payments_svc.is_configured(settings):
+            rows.append([InlineKeyboardButton(text="💳 Выставить счёт", callback_data=f"od:{order.id}:pay")])
         rows.append([InlineKeyboardButton(text="🚚 Отправлен (ввести трек)", callback_data=f"od:{order.id}:tr")])
     elif order.status == "shipped":
         rows.append([InlineKeyboardButton(text="📬 Доставлен", callback_data=f"od:{order.id}:next")])
@@ -454,14 +472,81 @@ async def send_admin_product(chat_id: int, pid: int) -> None:
             [InlineKeyboardButton(text="✏️ Цена", callback_data=f"sp:{p.id}"), InlineKeyboardButton(text="🔄 Режим фото", callback_data=f"ph:{p.id}")],
         ]
     )
+    import os
+
     photo = next((ph.url for ph in photos if ph.source == "supplier"), None)
+    local_photo = next((ph.url for ph in photos if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url)), None)
     try:
         if photo:
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=text, reply_markup=kb)
+        elif local_photo:
+            from aiogram.types import FSInputFile
+
+            await bot.send_photo(chat_id=chat_id, photo=FSInputFile(local_photo), caption=text, reply_markup=kb)
         else:
             await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
     except Exception:
         await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
+
+
+async def process_supplier_auto(text: str, local_paths: list[str]) -> None:
+    """Фаза 9: черновик из автопарсинга канала поставщика. Карточка — всем админам."""
+    bot = notify.admin_bot
+    if bot is None:
+        return
+    parsed = parse_product(text, known_brands=sorted(known_brands))
+    if parsed is None:
+        return
+    async with SessionMaker() as s:
+        # антидубль по тексту поставщика
+        dup = (await s.scalars(select(Product).where(Product.supplier_text == text[:4000]))).first()
+        if dup is not None:
+            return
+        brand = None
+        if parsed.brand:
+            slug = parsed.brand.lower().replace(" ", "_")[:64]
+            brand = (await s.scalars(select(Brand).where(Brand.slug == slug))).first()
+            if brand is None:
+                brand = Brand(slug=slug, title=parsed.brand[:64])
+                s.add(brand)
+                await s.flush()
+        category = None
+        if parsed.category:
+            cat_slug = parsed.category.lower().replace(" ", "_")[:64]
+            category = (await s.scalars(select(Category).where(Category.slug == cat_slug))).first()
+            if category is None:
+                category = Category(slug=cat_slug, title=parsed.category[:64])
+                s.add(category)
+                await s.flush()
+        product = Product(
+            brand_id=brand.id if brand else None,
+            category_id=category.id if category else None,
+            title=parsed.title[:255],
+            description=parsed.description,
+            article=parsed.article,
+            supplier_price=parsed.supplier_price,
+            retail_price=retail_price(parsed.supplier_price, settings.default_margin_pct),
+            sizes=parsed.sizes,
+            stock=parsed.stock,
+            status="pending",
+            photo_mode="local" if local_paths else "yandex",
+            supplier_channel=settings.supplier_channel_username,
+            supplier_text=text[:4000],
+        )
+        s.add(product)
+        await s.flush()
+        for i, path in enumerate(local_paths[:10]):
+            s.add(ProductPhoto(product_id=product.id, source="local", url=path, position=i))
+        for i, path in enumerate(yandex_library.paths_for(parsed.brand, limit=6)):
+            s.add(ProductPhoto(product_id=product.id, source="yandex", url=path, position=i + 10))
+        s.add(AdminAudit(admin_id=0, action="parse_auto", entity="product", entity_id=product.id))
+        await s.commit()
+        pid = product.id
+    for admin_id in settings.admin_ids:
+        try:
+            await send_admin_product(admin_id, pid)
+        except Exception:
+            continue
 
 
 @router.callback_query(F.data.startswith("ap:"))
