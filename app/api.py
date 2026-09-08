@@ -59,11 +59,24 @@ def create_app() -> FastAPI:
         async with SessionMaker() as s:
             total = (await s.execute(select(func.count()).select_from(q.subquery()))).scalar() or 0
             prods = (await s.scalars(q.limit(PAGE).offset(page * PAGE))).all()
-            # собираем фото параллельно, но не блокируем ответ дольше 4с
+            # локальные обложки первее всего: не протухают и не зависят от Яндекса
             async def _first_photo(pid: int):
+                import os
+
+                from app.services.photos import resolve_local
+
                 photos = (
                     await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).order_by(ProductPhoto.position))
                 ).all()
+                for ph in photos:
+                    if ph.source == "local":
+                        real = resolve_local(ph.url)
+                        if real:
+                            return "/media/" + os.path.basename(real)
+                # supplier file_id не отдаём в веб — только http ссылки
+                for ph in photos:
+                    if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
+                        return ph.url
                 for ph in photos:
                     if ph.source == "yandex":
                         try:
@@ -72,20 +85,6 @@ def create_app() -> FastAPI:
                                 return href
                         except Exception:
                             continue
-                # supplier file_id не отдаём в веб — только http ссылки
-                for ph in photos:
-                    if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
-                        return ph.url
-                # локальные фото отдаём относительным путём (тот же хост)
-                import os
-
-                from app.services.photos import resolve_local
-
-                for ph in photos:
-                    if ph.source == "local":
-                        real = resolve_local(ph.url)
-                        if real:
-                            return "/media/" + os.path.basename(real)
                 return None
 
             # делаем запросы последовательно внутри одной сессии (параллель внутри сессии нежелательна),

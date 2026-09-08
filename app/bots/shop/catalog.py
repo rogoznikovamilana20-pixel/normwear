@@ -149,40 +149,40 @@ async def cb_product(cb: CallbackQuery):
     rows.append([InlineKeyboardButton(text="🔒 Забронировать размер за 199₽", callback_data=f"res:{pid}")])
     rows.append([InlineKeyboardButton(text="🏠 Каталог", callback_data="cat"), InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    # file_id из форварда валиден только для admin-бота, shop-бот должен использовать только Yandex href
-    photo = None
+    from app.services.photos import resolve_local
+
+    # сначала локальная обложка: не протухает и не зависит от Яндекса
+    local_path = None
     for ph in photos:
-        if ph.source == "yandex":
-            try:
-                href = await yandex_library.download_url(ph.url)
-                if href:
-                    photo = href
-                    break
-            except Exception:
-                continue
+        if ph.source == "local":
+            local_path = resolve_local(ph.url)
+            if local_path:
+                break
+    # file_id из форварда валиден только для admin-бота, shop-бот использует href
+    photo = None
+    if local_path is None:
+        for ph in photos:
+            if ph.source == "yandex":
+                try:
+                    href = await yandex_library.download_url(ph.url)
+                    if href:
+                        photo = href
+                        break
+                except Exception:
+                    continue
     # fallback: supplier URL только если это http (не file_id)
-    if photo is None:
+    if photo is None and local_path is None:
         for ph in photos:
             if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
                 photo = ph.url
                 break
-    # fallback 2: локальное фото поставщика (скачано админ-ботом) — шоп-бот загружает сам
-    local_path = None
-    if photo is None:
-        from app.services.photos import resolve_local
-
-        for ph in photos:
-            if ph.source == "local":
-                local_path = resolve_local(ph.url)
-                if local_path:
-                    break
     try:
-        if photo:
-            await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb)
-        elif local_path:
+        if local_path:
             from aiogram.types import FSInputFile
 
             await cb.message.answer_photo(photo=FSInputFile(local_path), caption=text, reply_markup=kb)
+        elif photo:
+            await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb)
         else:
             await cb.message.answer(text, reply_markup=kb)
     except Exception:
