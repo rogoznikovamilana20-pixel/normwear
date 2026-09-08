@@ -528,10 +528,10 @@ async def send_admin_product(chat_id: int, pid: int) -> None:
     except Exception:
         pass
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    import os
+    from app.services.photos import resolve_local
 
     photo = next((ph.url for ph in photos if ph.source == "supplier"), None)
-    local_photo = next((ph.url for ph in photos if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url)), None)
+    local_photo = next((resolve_local(ph.url) for ph in photos if ph.source == "local"), None)
     try:
         if photo:
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=text, reply_markup=kb)
@@ -716,11 +716,12 @@ async def cb_vk_post(cb: CallbackQuery):
                     continue
             elif ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
                 refs.append(("http", ph.url))
-            elif ph.source == "local" and isinstance(ph.url, str):
-                import os as _os
+            elif ph.source == "local":
+                from app.services.photos import resolve_local as _rl
 
-                if _os.path.exists(ph.url):
-                    refs.append(("file", ph.url))
+                _real = _rl(ph.url)
+                if _real:
+                    refs.append(("file", _real))
             if len(refs) >= 4:
                 break
         try:

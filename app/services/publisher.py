@@ -34,11 +34,11 @@ async def collect_media(session: AsyncSession, product: Product, library: Yandex
     rows = (await session.scalars(
         select(ProductPhoto).where(ProductPhoto.product_id == product.id).order_by(ProductPhoto.position)
     )).all()
-    import os
+    from app.services.photos import resolve_local
 
     supplier = [r.url for r in rows if r.source == "supplier"]
     yandex = [r.url for r in rows if r.source == "yandex"]
-    local = [r.url for r in rows if r.source == "local" and isinstance(r.url, str) and os.path.exists(r.url)]
+    local = [p for p in (resolve_local(r.url) for r in rows if r.source == "local") if p]
     chosen: list[str] = []
     local_chosen: list[str] = []
     if product.photo_mode == "yandex":

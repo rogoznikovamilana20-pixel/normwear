@@ -79,9 +79,13 @@ def create_app() -> FastAPI:
                 # локальные фото отдаём относительным путём (тот же хост)
                 import os
 
+                from app.services.photos import resolve_local
+
                 for ph in photos:
-                    if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url):
-                        return "/media/" + os.path.basename(ph.url)
+                    if ph.source == "local":
+                        real = resolve_local(ph.url)
+                        if real:
+                            return "/media/" + os.path.basename(real)
                 return None
 
             # делаем запросы последовательно внутри одной сессии (параллель внутри сессии нежелательна),

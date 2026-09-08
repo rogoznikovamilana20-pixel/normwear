@@ -10,6 +10,26 @@ YA_API = "https://cloud-api.yandex.net/v1/disk/public/resources/download"
 _HREF_TTL = 3600  # 1 час, потом href от Яндекса протухает
 
 
+def resolve_local(url: str | None) -> str | None:
+    """Абсолютный путь к локальному фото. Храним относительные (data/supplier/x.jpg)."""
+    import os
+
+    if not url or not isinstance(url, str):
+        return None
+    if os.path.isabs(url):
+        return url if os.path.exists(url) else None
+    if url.startswith("http"):
+        return None
+    for cand in (BASE_DIR / url, BASE_DIR / "data" / "supplier" / os.path.basename(url)):
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+def store_local(filename: str) -> str:
+    return f"data/supplier/{filename}"
+
+
 class YandexLibrary:
     def __init__(self, index_path: Path, public_key: str):
         self.index_path = index_path

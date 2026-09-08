@@ -169,12 +169,13 @@ async def cb_product(cb: CallbackQuery):
     # fallback 2: локальное фото поставщика (скачано админ-ботом) — шоп-бот загружает сам
     local_path = None
     if photo is None:
-        import os
+        from app.services.photos import resolve_local
 
         for ph in photos:
-            if ph.source == "local" and isinstance(ph.url, str) and os.path.exists(ph.url):
-                local_path = ph.url
-                break
+            if ph.source == "local":
+                local_path = resolve_local(ph.url)
+                if local_path:
+                    break
     try:
         if photo:
             await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb)
