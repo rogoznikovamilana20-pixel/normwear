@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     admin_telegram_ids: str = ""
     auto_publish: bool = False
 
+    vk_token: str | None = None
+    vk_group_id: int | None = None
+
     yandex_public_key: str = "https://disk.yandex.ru/d/e4YGRLhebhBoVA"
     run_bots: bool = True
     base_port: int = 8000

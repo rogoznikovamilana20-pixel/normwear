@@ -238,6 +238,14 @@ async def st_tracking(message: Message, state: FSMContext):
     await send_order_card(message, oid, note="Трек-номер сохранён")
 
 
+@router.message(Command("content"))
+async def cmd_content(message: Message):
+    from app.services import content_plan as content_svc
+
+    mid = await content_svc.post_next(settings, force=True)
+    await message.answer(f"📝 Пост из контент-плана улетел (msg {mid})." if mid else "⚠️ Не вышло — проверь канал.")
+
+
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message, state: FSMContext):
     await state.set_state(AdminFSM.broadcast)
@@ -508,12 +516,18 @@ async def send_admin_product(chat_id: int, pid: int) -> None:
         f"📏 Размеры: {html.escape(sizes)}\n"
         f"🖼 Фото: {sum(1 for ph in photos if ph.source == 'supplier')} из поста + {sum(1 for ph in photos if ph.source == 'yandex')} с диска (режим: {mode})"
     )
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"ap:{p.id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"rj:{p.id}")],
-            [InlineKeyboardButton(text="✏️ Цена", callback_data=f"sp:{p.id}"), InlineKeyboardButton(text="🔄 Режим фото", callback_data=f"ph:{p.id}")],
-        ]
-    )
+    kb_rows = [
+        [InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"ap:{p.id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"rj:{p.id}")],
+        [InlineKeyboardButton(text="✏️ Цена", callback_data=f"sp:{p.id}"), InlineKeyboardButton(text="🔄 Режим фото", callback_data=f"ph:{p.id}")],
+    ]
+    try:
+        from app.services import vkposter as vkposter_svc
+
+        if vkposter_svc.is_configured(settings):
+            kb_rows.append([InlineKeyboardButton(text="📲 В ВК", callback_data=f"vk:{p.id}")])
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     import os
 
     photo = next((ph.url for ph in photos if ph.source == "supplier"), None)
@@ -673,6 +687,51 @@ async def cb_reject(cb: CallbackQuery):
     except Exception:
         pass
     await cb.answer("Отклонён")
+
+
+@router.callback_query(F.data.startswith("vk:"))
+async def cb_vk_post(cb: CallbackQuery):
+    pid = int(cb.data.split(":")[1])
+    from app.services import vkposter as vkposter_svc
+
+    if not vkposter_svc.is_configured(settings):
+        await cb.answer("ВК не настроен", show_alert=True)
+        return
+    await cb.answer("Постю в ВК...")
+    async with SessionMaker() as s:
+        p = await s.get(Product, pid)
+        if p is None:
+            await cb.message.answer("Товар не найден")
+            return
+        brand = await s.get(Brand, p.brand_id) if p.brand_id else None
+        photos = (await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).order_by(ProductPhoto.position))).all()
+        refs: list[tuple[str, str]] = []
+        for ph in photos:
+            if ph.source == "yandex":
+                try:
+                    href = await yandex_library.download_url(ph.url)
+                    if href:
+                        refs.append(("http", href))
+                except Exception:
+                    continue
+            elif ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
+                refs.append(("http", ph.url))
+            elif ph.source == "local" and isinstance(ph.url, str):
+                import os as _os
+
+                if _os.path.exists(ph.url):
+                    refs.append(("file", ph.url))
+            if len(refs) >= 4:
+                break
+        try:
+            link = await vkposter_svc.post_product(settings, p, brand.title if brand else None, refs)
+        except Exception as e:
+            await cb.message.answer(f"⚠️ ВК не вышло: {e}")
+            return
+    if link:
+        await cb.message.answer(f"📲 Опубликовано в ВК: {link}")
+    else:
+        await cb.message.answer("⚠️ ВК не вышло, проверь токен.")
 
 
 @router.callback_query(F.data.startswith("rv_pub:"))

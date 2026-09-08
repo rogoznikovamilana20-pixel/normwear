@@ -158,6 +158,15 @@ async def run_all() -> None:
             log.info("Retention loops enabled")
         except Exception as e:
             log.warning("Retention disabled: %s", e)
+    # Контент-план канала: 1 пост в день (там где живёт админ-бот)
+    if admin is not None:
+        try:
+            from app.services import content_plan as content_svc
+
+            tasks.append(asyncio.create_task(content_svc.content_loop(settings)))
+            log.info("Content loop enabled")
+        except Exception as e:
+            log.warning("Content disabled: %s", e)
     try:
         await asyncio.gather(*tasks)
     finally:
