@@ -139,7 +139,7 @@ footer .bar button{flex:1}
   <div class="modal-bg"></div>
   <div class="modal-box">
     <div class="modal-head"><b id="mTitle">Товар</b><button onclick="closeModal()" style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:6px 10px;color:var(--text);cursor:pointer">✕</button></div>
-    <div class="carousel"><img id="mImg" src=""><div class="carousel-dots" id="mDots"></div></div>
+    <div class="carousel"><img id="mImg" src="" referrerpolicy="no-referrer"><div class="carousel-dots" id="mDots"></div></div>
     <div style="padding:14px 16px">
       <div id="mBrand" class="brand"></div>
       <div id="mPrice" style="font-size:22px;font-weight:800;margin:6px 0"></div>
@@ -214,7 +214,7 @@ async function loadCatalog(){
   document.getElementById('empty').style.display=items.length?'none':'block';
   for(const p of items){
     const card=document.createElement('div');card.className='card';card.onclick=()=>openProd(p.id);
-    const img=p.photo?`<img src="${p.photo}" loading="lazy">`:`<div style="aspect-ratio:1;background:var(--card2);display:flex;align-items:center;justify-content:center;color:var(--muted)">нет фото</div>`;
+    const img=p.photo?`<img src="${p.photo}" loading="lazy" referrerpolicy="no-referrer">`:`<div style="aspect-ratio:1;background:var(--card2);display:flex;align-items:center;justify-content:center;color:var(--muted)">нет фото</div>`;
     const sizes=p.sizes&&p.sizes.length?`<div class="sizes">${esc(p.sizes.slice(0,4).join(' · '))}</div>`:'';
     card.innerHTML=img+`<div class="info"><div class="brand">${esc(p.title.split(' ')[0])}</div><div class="title">${esc(p.title)}</div>${sizes}<div class="price">${p.price} <small>₽</small></div><button class="btn btn-accent" onclick="event.stopPropagation();quickAdd(${p.id})">В корзину</button></div>`;
     grid.appendChild(card);

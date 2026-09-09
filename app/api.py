@@ -59,33 +59,12 @@ def create_app() -> FastAPI:
         async with SessionMaker() as s:
             total = (await s.execute(select(func.count()).select_from(q.subquery()))).scalar() or 0
             prods = (await s.scalars(q.limit(PAGE).offset(page * PAGE))).all()
-            # локальные обложки первее всего: не протухают и не зависят от Яндекса
+            # отдаём прокси-URL: сервер сам разрулит источник и закэширует
             async def _first_photo(pid: int):
-                import os
-
-                from app.services.photos import resolve_local
-
-                photos = (
-                    await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).order_by(ProductPhoto.position))
-                ).all()
-                for ph in photos:
-                    if ph.source == "local":
-                        real = resolve_local(ph.url)
-                        if real:
-                            return "/media/" + os.path.basename(real)
-                # supplier file_id не отдаём в веб — только http ссылки
-                for ph in photos:
-                    if ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
-                        return ph.url
-                for ph in photos:
-                    if ph.source == "yandex":
-                        try:
-                            href = await asyncio.wait_for(yandex_library.download_url(ph.url), timeout=3.0)
-                            if href:
-                                return href
-                        except Exception:
-                            continue
-                return None
+                has = (
+                    await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).limit(1))
+                ).first()
+                return f"/img/{pid}" if has else None
 
             # делаем запросы последовательно внутри одной сессии (параллель внутри сессии нежелательна),
             # но каждый download_url — внешний HTTP, делаем с таймаутом чтобы не вешать ответ
@@ -98,6 +77,86 @@ def create_app() -> FastAPI:
                 out.append({"id": p.id, "title": p.title, "price": int(p.retail_price or 0), "sizes": p.sizes or [], "photo": photo})
         return {"total": total, "page": page, "pages": (total + PAGE - 1) // PAGE, "items": out}
 
+    async def _serve_bytes(pid: int, idx: int) -> tuple[bytes, str] | None:
+        """Байты фото товара: локальный кэш -> supplier http -> yandex. Кэшируем на диск."""
+        import os
+
+        from fastapi.responses import Response  # noqa
+
+        from app.services.photos import resolve_local
+
+        cache = BASE_DIR / "data" / "cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        cached = cache / f"{pid}_{idx}.jpg"
+        if cached.exists() and cached.stat().st_size > 2048:
+            return cached.read_bytes(), "image/jpeg"
+        import httpx as _httpx
+
+        async with SessionMaker() as s:
+            p = await s.get(Product, pid)
+            if p is None or p.status != "published":
+                return None
+            photos = (
+                await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).order_by(ProductPhoto.position))
+            ).all()
+        # порядок: локальное -> http -> yandex
+        ordered = sorted(photos, key=lambda ph: {"local": 0, "supplier": 1, "yandex": 2}.get(ph.source, 3))
+        if idx < len(ordered):
+            ordered = ordered[idx:] + ordered[:idx]
+        async with _httpx.AsyncClient(follow_redirects=True, timeout=20) as c:
+            for ph in ordered:
+                try:
+                    data = None
+                    if ph.source == "local":
+                        real = resolve_local(ph.url)
+                        if real:
+                            data = open(real, "rb").read()
+                    elif ph.source == "supplier" and isinstance(ph.url, str) and ph.url.startswith("http"):
+                        r = await c.get(ph.url)
+                        if r.status_code == 200 and (r.headers.get("content-type", "").startswith("image")):
+                            data = r.content
+                    elif ph.source == "supplier" and isinstance(ph.url, str) and ph.url:
+                        # file_id админ-бота: качаем через него и кэшируем
+                        from app.services import notify as _notify
+
+                        if _notify.admin_bot is not None:
+                            f = await _notify.admin_bot.get_file(ph.url)
+                            buf = await _notify.admin_bot.download_file(f.file_path)
+                            raw = buf.read()
+                            if raw and len(raw) > 2048:
+                                data = raw
+                    elif ph.source == "yandex":
+                        href = await asyncio.wait_for(yandex_library.download_url(ph.url), timeout=5.0)
+                        if href:
+                            # без заголовка Referer вообще — Яндекс отдаёт 200, с любым Referer 403
+                            r = await c.get(href)
+                            if r.status_code == 200 and (r.headers.get("content-type", "").startswith("image")):
+                                data = r.content
+                    if data and len(data) > 2048:
+                        cached.write_bytes(data)
+                        return data, "image/jpeg"
+                except Exception:
+                    continue
+        return None
+
+    @app.get("/img/{pid}")
+    async def img_cover(pid: int):
+        from fastapi.responses import Response
+
+        got = await _serve_bytes(pid, 0)
+        if got is None:
+            raise HTTPException(status_code=404, detail="no photo")
+        return Response(content=got[0], media_type=got[1])
+
+    @app.get("/img/{pid}/{idx}")
+    async def img_idx(pid: int, idx: int):
+        from fastapi.responses import Response
+
+        got = await _serve_bytes(pid, max(0, idx))
+        if got is None:
+            raise HTTPException(status_code=404, detail="no photo")
+        return Response(content=got[0], media_type=got[1])
+
     @app.get("/api/product/{pid}")
     async def api_product(pid: int):
         async with SessionMaker() as s:
@@ -105,27 +164,16 @@ def create_app() -> FastAPI:
             if p is None or p.status != "published":
                 raise HTTPException(status_code=404, detail="product not found")
             brand = await s.get(Brand, p.brand_id) if p.brand_id else None
-            photos = (
-                await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid).order_by(ProductPhoto.position))
-            ).all()
-        urls = []
-        for ph in photos:
-            if ph.source == "yandex":
-                try:
-                    href = await asyncio.wait_for(yandex_library.download_url(ph.url), timeout=3.0)
-                    if href:
-                        urls.append(href)
-                except Exception:
-                    continue
-            elif isinstance(ph.url, str) and ph.url.startswith("http") and len(urls) < 10:
-                urls.append(ph.url)
+            n = len(
+                (await s.scalars(select(ProductPhoto).where(ProductPhoto.product_id == pid))).all()
+            )
         return {
             "id": p.id,
             "title": p.title,
             "brand": brand.title if brand else None,
             "price": int(p.retail_price or 0),
             "sizes": p.sizes or [],
-            "photos": urls[:10],
+            "photos": [f"/img/{pid}/{i}" for i in range(min(n, 10))],
         }
 
     @app.get("/api/cart")
