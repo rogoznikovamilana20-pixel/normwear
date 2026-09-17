@@ -12,11 +12,13 @@ MENU = {"🛍 Каталог", "🛒 Корзина", "☰ Меню", "📦 Мо
 WELCOME = (
     "👋 Добро пожаловать в <b>NORMWEAR</b>\n"
     "\n"
-    "Стритвир и кроссовки топовых брендов.\n"
+    "🔥 Стритвир и кроссовки топовых брендов\n"
     "💰 Честные цены · 🚚 Доставка 2–4 дня · ✅ Проверка перед отправкой\n"
     "\n"
-    "Выбирай раздел внизу и собирай корзину. Бонусы начисляются с каждого заказа.\n"
-    "❓ Вопросы — команда /faq."
+    "🛍 Выбирай раздел внизу и собирай корзину\n"
+    "🎁 Бонусы начисляются с каждого заказа\n"
+    "🏭 Оптовикам (от 10 шт) — команда /opt\n"
+    "❓ Вопросы — команда /faq"
 )
 
 
@@ -43,7 +45,7 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🛍 Каталог"), KeyboardButton(text="🛒 Корзина")],
-            [KeyboardButton(text="☰ Меню")],
+            [KeyboardButton(text="☰ Меню"), KeyboardButton(text="📦 Мои заказы")],
         ],
         resize_keyboard=True,
     )
@@ -67,6 +69,7 @@ def menu_inline() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔔 Дропы", callback_data="m_drops"), InlineKeyboardButton(text="🎡 Колесо", callback_data="m_wheel")],
         [InlineKeyboardButton(text="📦 BOX", callback_data="m_box"), InlineKeyboardButton(text="🤍 Избранное", callback_data="m_fav")],
         [InlineKeyboardButton(text="❓ FAQ", callback_data="m_faq"), InlineKeyboardButton(text="📞 Поддержка", callback_data="m_support")],
+        [InlineKeyboardButton(text="🏠 На главную", callback_data="home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -88,6 +91,11 @@ class Checkout(StatesGroup):
     confirm = State()
 
 
+class OptOrder(StatesGroup):
+    contact = State()
+    lines = State()
+
+
 class ReviewFSM(StatesGroup):
     text = State()
 
@@ -104,7 +112,10 @@ pending_stock_product: dict[int, int] = {}
 from app.bots.shop import catalog as _catalog  # noqa: F401
 from app.bots.shop import cart as _cart  # noqa: F401
 from app.bots.shop import loyalty as _loyalty  # noqa: F401
+from app.bots.shop import opt as _opt  # noqa: F401
 from app.bots.shop import reviews as _reviews  # noqa: F401
-from app.bots.shop import search as _search  # noqa: F401
+# Порядок важен: menu раньше search (иначе support_message съедает кнопки меню),
+# faq строго последним (там фолбэк на необработанный контент).
 from app.bots.shop import menu as _menu  # noqa: F401
+from app.bots.shop import search as _search  # noqa: F401
 from app.bots.shop import faq as _faq  # noqa: F401

@@ -26,12 +26,12 @@ async def send_brands(target: Message):
             )
         ).all()
     if not rows:
-        await target.answer("Каталог пока пуст — новые дропы скоро 🙂", reply_markup=main_menu())
+        await target.answer("🛍 <b>Каталог</b>\n\nКаталог пока пуст — новые дропы скоро �\nПодпишись на канал @normwear_shop чтобы не пропустить!", reply_markup=main_menu())
         return
     buttons = [InlineKeyboardButton(text=title, callback_data=f"br:{bid}") for bid, title in rows]
     rows_kb = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
     rows_kb.append([InlineKeyboardButton(text="🏠 Меню", callback_data="home")])
-    await target.answer("🛍 <b>Каталог</b>\nВыберите бренд:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb))
+    await target.answer("🛍 <b>Каталог</b>\n\nВыберите бренд:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb))
 
 
 @router.callback_query(F.data.startswith("br:"))

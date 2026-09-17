@@ -16,7 +16,7 @@ from app.bots.shop import Checkout, MENU, ReviewFSM, WELCOME, cancel_kb, main_me
 async def render_cart(target: Message, user_id: int):
     items = await run_get_cart(user_id)
     if not items:
-        await target.answer("🛒 Корзина пуста", reply_markup=main_menu())
+        await target.answer("🛒 <b>Корзина пуста</b>\n\nДобавьте товары из каталога 🔥", reply_markup=main_menu())
         return
     lines = ["<b>🛒 Ваша корзина</b>", ""]
     subtotal = 0
@@ -27,7 +27,7 @@ async def render_cart(target: Message, user_id: int):
         label = p.title[:28] + (f" · {ci.size}" if ci.size else "")
         lines.append(f"• {html.escape(label)} — {price} ₽")
         rows.append([InlineKeyboardButton(text=f"🗑 {label}", callback_data=f"ci:{ci.id}:del")])
-    lines += ["", f"<b>Итого: {subtotal} ₽</b>", "", "Оплата после подтверждения заказа менеджером."]
+    lines += ["", f"<b>Итого: {subtotal} ₽</b>", "", "💳 Оплата после подтверждения заказа менеджером\n🚚 Доставка 2–4 дня"]
     rows.append([InlineKeyboardButton(text="✅ Оформить заказ", callback_data="chk")])
     rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="home")])
     await target.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
