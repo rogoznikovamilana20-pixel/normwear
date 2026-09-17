@@ -86,13 +86,10 @@ async def publish_product(bot: Bot, session: AsyncSession, product: Product, lib
     session.add(ChannelPost(product_id=product.id, message_id=message_id, channel_id=str(settings.shop_channel_id), text=caption))
     # кнопка воронки под постом — медиагруппа не держит кнопки, шлём отдельным сообщением
     try:
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        miniapp_base = (settings.miniapp_url_template or "").split("?")[0].replace("/app/", "/").rstrip("/") + "/"
-        if not miniapp_base.startswith("https://"):
-            miniapp_base = "https://normwear-shop.onrender.com/"
         kb_rows: list[list[InlineKeyboardButton]] = [
-            [InlineKeyboardButton(text="✨ Открыть каталог", web_app=WebAppInfo(url=miniapp_base))],
+            [InlineKeyboardButton(text="🛍 Весь каталог", url=f"https://t.me/{settings.shop_username}?start=catalog")],
             [InlineKeyboardButton(text="🛍 Открыть в боте", url=f"https://t.me/{settings.shop_username}?start=product_{product.id}")],
             [InlineKeyboardButton(text="🎡 Колесо фортуны", url=f"https://t.me/{settings.shop_username}?start=wheel")],
         ]

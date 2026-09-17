@@ -108,6 +108,7 @@ class Order(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     status: Mapped[str] = mapped_column(String(24), default="awaiting_delivery", index=True)
+    is_wholesale: Mapped[bool] = mapped_column(Boolean, default=False)
     subtotal: Mapped[float] = mapped_column(Float, default=0)
     discount: Mapped[float] = mapped_column(Float, default=0)
     delivery_cost: Mapped[float] = mapped_column(Float, default=0)
@@ -339,4 +340,48 @@ class BrandSubscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Giveaway(Base):
+    __tablename__ = "giveaways"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True)  # give1
+    title: Mapped[str] = mapped_column(String(128), default="Розыгрыш")
+    prize_product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active/drawn
+    channel_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class GiveawayEntry(Base):
+    __tablename__ = "giveaway_entries"
+    __table_args__ = (UniqueConstraint("giveaway_id", "user_id", name="uq_giveaway_user"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    giveaway_id: Mapped[int] = mapped_column(ForeignKey("giveaways.id"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class GiveawayReferral(Base):
+    """Кто кого привёл в розыгрыш: +1 билет пригласившему за каждого друга."""
+    __tablename__ = "giveaway_referrals"
+    __table_args__ = (UniqueConstraint("giveaway_id", "invited_id", name="uq_giveaway_invited"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    giveaway_id: Mapped[int] = mapped_column(ForeignKey("giveaways.id"), index=True)
+    inviter_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    invited_id: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScheduledPost(Base):
+    """Отложенные посты в канал: send_at — naive UTC."""
+    __tablename__ = "scheduled_posts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    buttons: Mapped[list | None] = mapped_column(JSON)  # [[text, url], ...] по строкам
+    send_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    is_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    sent_message_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

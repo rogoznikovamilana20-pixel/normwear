@@ -14,6 +14,7 @@ from app.models import (
     AdminAudit,
     Brand,
     Category,
+    GiveawayEntry,
     Order,
     OrderItem,
     Product,
@@ -68,7 +69,7 @@ async def cmd_admin(message: Message, state: FSMContext):
     await message.answer(
         "🛠 <b>Админ-панель NORMWEAR</b>\n\n"
         f"📩 Просто перешлите пост из @{settings.supplier_channel_username} в этот чат — бот распарсит товар и покажет карточку.\n\n"
-        "Команды: /orders — заказы · /promo CODE PERCENT [MIN] [MAXUSES] — промокод",
+        "Команды: /orders — заказы · /promo CODE PERCENT [MIN] [MAXUSES] — промокод · /draw — финал розыгрыша · /digest — сводка",
         reply_markup=kb,
     )
 
@@ -287,6 +288,92 @@ async def st_broadcast(message: Message, state: FSMContext):
     await message.answer(f"✅ Разослано {sent}/{len(ids)}.")
 
 
+@router.message(Command("digest"))
+async def cmd_digest(message: Message):
+    """Сводка: люди, деньги, воронка, розыгрыш, канал + рекомендации."""
+    from datetime import timedelta
+
+    from app.models import (
+        CartItem,
+        DropSubscription,
+        FortuneSpin,
+        Giveaway,
+        GiveawayEntry,
+        GiveawayReferral,
+        Order,
+        Review,
+        ScheduledPost,
+        User,
+    )
+
+    week_ago = utcnow() - timedelta(days=7)
+    async with SessionMaker() as s:
+        users = (await s.execute(select(func.count()).select_from(User))).scalar() or 0
+        new7 = (await s.execute(select(func.count()).select_from(User).where(User.created_at >= week_ago))).scalar() or 0
+        buyers = (await s.execute(select(func.count()).select_from(User).where(User.orders_count > 0))).scalar() or 0
+        ords = (await s.scalars(select(Order))).all()
+        rev = sum(int(o.total) for o in ords if o.status == "completed")
+        done = [o for o in ords if o.status == "completed"]
+        avg = int(rev / len(done)) if done else 0
+        active = [o for o in ords if o.status not in ("completed", "cancelled")]
+        active_sum = sum(int(o.total) for o in active)
+        opt_n = sum(1 for o in ords if o.is_wholesale)
+        carts = (await s.execute(select(func.count()).select_from(CartItem))).scalar() or 0
+        drops = (await s.execute(select(func.count()).select_from(DropSubscription))).scalar() or 0
+        spins = (await s.execute(select(func.count()).select_from(FortuneSpin))).scalar() or 0
+        rev_total = (await s.execute(select(func.count()).select_from(Review))).scalar() or 0
+        rev_unpub = (await s.execute(select(func.count()).select_from(Review).where(Review.is_published == False))).scalar() or 0  # noqa: E712
+        gw = (await s.scalars(select(Giveaway).where(Giveaway.code == "give1", Giveaway.status == "active"))).first()
+        sched = (await s.execute(select(func.count()).select_from(ScheduledPost).where(ScheduledPost.is_sent == False))).scalar() or 0  # noqa: E712
+        g_entries = g_refs = g_tickets = g_days = 0
+        if gw is not None:
+            g_entries = (await s.execute(select(func.count()).select_from(GiveawayEntry).where(GiveawayEntry.giveaway_id == gw.id))).scalar() or 0
+            g_refs = (await s.execute(select(func.count()).select_from(GiveawayReferral).where(GiveawayReferral.giveaway_id == gw.id))).scalar() or 0
+            g_tickets = g_entries + g_refs
+            if gw.ends_at:
+                g_days = max(0, (gw.ends_at - utcnow()).days)
+    subs = 0
+    try:
+        if notify.admin_bot is not None:
+            subs = await notify.admin_bot.get_chat_member_count(int(settings.shop_channel_id))
+    except Exception:
+        pass
+    conv = round(buyers / users * 100, 1) if users else 0
+    lines = [
+        f"📊 <b>Сводка NORMWEAR</b> · {utcnow():%d.%m %H:%M}",
+        "",
+        f"👥 Люди: <b>{users}</b> (+{new7} за 7 дн) · покупателей: {buyers} ({conv}%)",
+        f"📢 Канал: <b>{subs}</b> подписчиков",
+        f"💰 Выручка: <b>{rev}₽</b> · средний чек: {avg}₽",
+        f"📦 Активных заказов: {len(active)} на {active_sum}₽ · опт-заявок всего: {opt_n}",
+        f"🛒 Позиций в корзинах: {carts} · 🔔 дропы: {drops} · 🎡 крутки: {spins}",
+        f"⭐️ Отзывов: {rev_total} (на модерации: {rev_unpub})",
+    ]
+    if gw is not None:
+        lines.append(f"🎲 Розыгрыш: {g_entries} уч. · {g_tickets} билетов · {g_refs} друзей · финал через {g_days} дн.")
+    if sched:
+        lines.append(f"🕓 Отложенных постов: {sched}")
+    recs = []
+    if rev_unpub:
+        recs.append(f"⭐️ На модерации {rev_unpub} отзыв(а) — опубликуй, это доверие и продажи")
+    if gw is not None and g_days <= 3:
+        recs.append(f"🎲 Финал через {g_days} дн — проверь призы и подписки, будет /draw")
+    elif gw is not None and g_entries < 20:
+        recs.append("🎲 Участников мало — репосты розыгрыша по чатам и communities")
+    if not opt_n:
+        recs.append("🏭 Опт-заявок ноль — разошли прайс по чатам перекупов")
+    if carts and not active:
+        recs.append(f"🛒 {carts} поз. в корзинах без заказов — добей рассылкой")
+    if not new7:
+        recs.append("📉 Притока нет 7 дней — нужен внешний трафик (партнёрки, посевы)")
+    if users >= 20 and conv < 5:
+        recs.append("🔄 Конверсия ниже 5% — глянь отзывы и распродажу")
+    if not recs:
+        recs.append("✅ Всё ровно — держи темп: контент-план идёт сам")
+    lines += ["", "💡 <b>Рекомендации:</b>"] + [f"• {r}" for r in recs[:4]]
+    await message.answer("\n".join(lines))
+
+
 @router.message(Command("crm"))
 async def cmd_crm(message: Message):
     async with SessionMaker() as s:
@@ -340,6 +427,115 @@ async def cmd_promo(message: Message):
     await message.answer(f"🎟 Промокод <code>{code}</code>: −{value:g}% от {int(min_order)} ₽{lim}")
 
 
+@router.message(Command("optprice"))
+async def cmd_optprice(message: Message):
+    """Опт-прайс: /optprice АРТИКУЛ [КОЛ-ВО] · /optprice all — весь прайс файлом."""
+    from aiogram.types import BufferedInputFile
+
+    from app.services import opt as opt_svc
+
+    args = (message.text or "").split()[1:]
+    if not args:
+        await message.answer(
+            "🏭 <b>Опт-прайс</b>\n\n"
+            f"Ступени: {opt_svc.tiers_text()}\n\n"
+            "/optprice <code>АРТИКУЛ [КОЛ-ВО]</code> — цены по ступеням\n"
+            "/optprice <code>all</code> — весь прайс файлом"
+        )
+        return
+    if args[0].lower() == "all":
+        raw = await opt_svc.pricelist_csv()
+        try:
+            from app.config import BASE_DIR
+
+            (BASE_DIR / "data" / "opt_price.csv").write_bytes(raw)
+        except Exception:
+            pass
+        await message.answer_document(BufferedInputFile(raw, filename="opt_price.csv"), caption="📄 Опт-прайс (внутренний, не пересылать)")
+        return
+    article = args[0].upper()
+    try:
+        qty = int(args[1]) if len(args) > 1 else 10
+    except ValueError:
+        qty = 10
+    cat = await opt_svc.article_catalog()
+    p = cat.get(article)
+    if p is None:
+        await message.answer("Нет такого артикула в опубликованном.")
+        return
+    base = float(p.supplier_price or 0)
+    await message.answer(
+        f"🏭 <b>{html.escape(article)}</b> — {html.escape(p.title[:80])}\n\n"
+        f"{opt_svc.tier_lines(base)}\n"
+        f"Розница: <b>{int(p.retail_price or 0)}₽</b> · кол-во в запросе: {qty} шт"
+    )
+
+
+@router.message(Command("scheduled"))
+async def cmd_scheduled(message: Message):
+    """Очередь отложенных постов."""
+    from app.models import ScheduledPost
+    from app.services import scheduled as scheduled_svc
+
+    async with SessionMaker() as s:
+        rows = await scheduled_svc.pending(s)
+    if not rows:
+        await message.answer("📭 Очередь отложенных постов пуста")
+        return
+    lines = ["🕓 <b>Отложенные посты:</b>", ""]
+    for r in rows:
+        lines.append(f"#{r.id} · {r.send_at:%d.%m %H:%M} UTC · {r.text[:60]}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("draw"))
+async def cmd_draw(message: Message):
+    """Финал розыгрыша: /draw — 3 победителя среди подписчиков + купоны 2-3 места."""
+    from app.services import giveaway as giveaway_svc
+
+    async with SessionMaker() as s:
+        gw = await giveaway_svc.active(s)
+        if gw is None:
+            await message.answer("Активных розыгрышей нет")
+            return
+        n = (await s.execute(select(func.count()).select_from(GiveawayEntry).where(GiveawayEntry.giveaway_id == gw.id))).scalar() or 0
+        if n < 1:
+            await message.answer("Участников пока нет")
+            return
+        winners = await giveaway_svc.draw(s, notify.shop_bot, settings, gw)
+    if not winners:
+        await message.answer("Ни один участник не подписан на канал — некому вручать")
+        return
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [f"🎲 <b>Розыгрыш «{html.escape(gw.title)}» завершён!</b>", ""]
+    for i, (uid, prize, code) in enumerate(winners):
+        u = None
+        async with SessionMaker() as s2:
+            u = await s2.get(User, uid)
+        name = f"@{u.username}" if u and u.username else f"id <code>{uid}</code>"
+        extra = f" — купон <code>{code}</code>" if code else ""
+        lines.append(f"{medals[i]} {name}: {prize}{extra}")
+        # личка победителю через шоп-бот
+        if notify.shop_bot is not None:
+            try:
+                dm = f"🎉 Ты выиграл в розыгрыше NORMWEAR: {medals[i]} {prize}!"
+                if code:
+                    dm += f"\nТвой личный купон (одноразовый): <code>{code}</code>"
+                if i == 0:
+                    dm += "\nНапиши нам размер и адрес — менеджер свяжется 🤝"
+                await notify.shop_bot.send_message(uid, dm)
+            except Exception:
+                lines.append(f"  ⚠️ не смог написать {name} в личку — свяжись вручную")
+    text = "\n".join(lines)
+    # анонс в канал ответом на пост розыгрыша
+    try:
+        if notify.admin_bot is not None and gw.channel_message_id:
+            await notify.admin_bot.send_message(settings.shop_channel_id, text, reply_to_message_id=gw.channel_message_id)
+    except Exception:
+        pass
+    await message.answer(text)
+
+
 @router.message(Command("droptimer"))
 async def cmd_droptimer(message: Message):
     args = (message.text or "").split()[1:]
@@ -364,7 +560,7 @@ async def cmd_droptimer(message: Message):
     # постим в канал
     bot = notify.admin_bot
     if bot and settings.shop_channel_id:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Напомнить", callback_data=f"drop_remind:{tid}")]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Напомнить", url=f"https://t.me/{settings.shop_username}?start=remind_{tid}")]])
         try:
             msg = await bot.send_message(
                 chat_id=settings.shop_channel_id,
@@ -795,8 +991,8 @@ async def cb_review_delete(cb: CallbackQuery):
             return
         user = await s.get(User, rev.user_id)
         if user:
-            user.bonus_points = max(0, (user.bonus_points or 0) - 50)
-            s.add(LoyaltyTransaction(user_id=user.id, order_id=rev.order_id, points=-50, kind="review", note=f"Отзыв №{rid} отклонён"))
+            user.bonus_points = max(0, (user.bonus_points or 0) - 200)
+            s.add(LoyaltyTransaction(user_id=user.id, order_id=rev.order_id, points=-200, kind="review", note=f"Отзыв №{rid} отклонён"))
         await s.delete(rev)
         await s.commit()
     try:

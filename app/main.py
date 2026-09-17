@@ -37,11 +37,15 @@ log = logging.getLogger("main")
 SHOP_COMMANDS = [
     BotCommand(command="start", description="Магазин NORMWEAR"),
     BotCommand(command="faq", description="Частые вопросы"),
+    BotCommand(command="opt", description="Опт от 10 шт"),
 ]
 ADMIN_COMMANDS = [
     BotCommand(command="admin", description="Панель управления"),
     BotCommand(command="orders", description="Активные заказы"),
     BotCommand(command="promo", description="Создать промокод"),
+    BotCommand(command="draw", description="Финал розыгрыша"),
+    BotCommand(command="scheduled", description="Отложенные посты"),
+    BotCommand(command="digest", description="Сводка магазина"),
 ]
 
 
@@ -162,8 +166,10 @@ async def run_all() -> None:
     if admin is not None:
         try:
             from app.services import content_plan as content_svc
+            from app.services import scheduled as scheduled_svc
 
             tasks.append(asyncio.create_task(content_svc.content_loop(settings)))
+            tasks.append(asyncio.create_task(scheduled_svc.scheduled_loop(settings)))
             log.info("Content loop enabled")
         except Exception as e:
             log.warning("Content disabled: %s", e)

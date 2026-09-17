@@ -1,5 +1,5 @@
 from aiogram import F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.db import SessionMaker
@@ -151,3 +151,9 @@ async def cb_faq_human(cb: CallbackQuery):
     )
     await cb.message.answer("Передал менеджеру ✅ Ответ придёт в этот чат.")
     await cb.answer()
+
+
+@router.message(StateFilter(None), F.sticker | F.video | F.video_note | F.document | F.contact | F.location | F.venue | F.dice | F.animation | F.game)
+async def content_fallback(message: Message):
+    # Стикеры/файлы/гео без обработчика молчали — отвечаем дружелюбно
+    await message.answer("Принято 😊 Если это вопрос — напиши текстом, менеджер ответит. А каталог — по кнопке 🛍 Каталог.", reply_markup=main_menu())

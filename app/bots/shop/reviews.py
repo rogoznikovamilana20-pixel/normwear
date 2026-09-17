@@ -22,7 +22,7 @@ async def cb_rev_start(cb: CallbackQuery, state: FSMContext):
         return
     pending_review[cb.from_user.id] = oid
     await state.set_state(ReviewFSM.text)
-    await cb.message.answer("⭐️ Напиши отзыв одним сообщением — текст + можно приложить фото позже. За отзыв +50 бонусов!")
+    await cb.message.answer("⭐️ Напиши отзыв одним сообщением — текст + можно приложить фото позже. За отзыв +200 бонусов!")
     await cb.answer()
 
 
@@ -79,12 +79,12 @@ async def st_review_photo(message: Message, state: FSMContext):
         rid = rev.id
         user = await s.get(U, message.from_user.id)
         if user:
-            user.bonus_points = (user.bonus_points or 0) + 50
-            s.add(LoyaltyTransaction(user_id=user.id, order_id=oid, points=50, kind="review", note=f"Бонус за фото-отзыв {oid}"))
+            user.bonus_points = (user.bonus_points or 0) + 200
+            s.add(LoyaltyTransaction(user_id=user.id, order_id=oid, points=200, kind="review", note=f"Бонус за фото-отзыв {oid}"))
         await s.commit()
     await state.clear()
     pending_review.pop(message.from_user.id, None)
-    await message.answer("Спасибо за фото-отзыв! +50 бонусов 🎁 После проверки выложим в канал.", reply_markup=main_menu())
+    await message.answer("Спасибо за фото-отзыв! +200 бонусов 🎁 После проверки выложим в канал.", reply_markup=main_menu())
     # на модерацию админам
     uname = f"@{message.from_user.username}" if message.from_user.username else "без юзернейма"
     kb = InlineKeyboardMarkup(
@@ -136,12 +136,12 @@ async def st_review_text(message: Message, state: FSMContext):
         rid = rev.id
         user = await s.get(U, message.from_user.id)
         if user:
-            user.bonus_points = (user.bonus_points or 0) + 50
-            s.add(LoyaltyTransaction(user_id=user.id, order_id=oid, points=50, kind="review", note=f"Бонус за отзыв к заказу №{oid}"))
+            user.bonus_points = (user.bonus_points or 0) + 200
+            s.add(LoyaltyTransaction(user_id=user.id, order_id=oid, points=200, kind="review", note=f"Бонус за отзыв к заказу №{oid}"))
         await s.commit()
     await state.clear()
     pending_review.pop(message.from_user.id, None)
-    await message.answer("Спасибо за отзыв! +50 бонусов начислено 🎁 После проверки выложим в канал.", reply_markup=main_menu())
+    await message.answer("Спасибо за отзыв! +200 бонусов начислено 🎁 После проверки выложим в канал.", reply_markup=main_menu())
     # на модерацию админам
     uname = f"@{message.from_user.username}" if message.from_user.username else "без юзернейма"
     kb = InlineKeyboardMarkup(
