@@ -173,6 +173,15 @@ async def run_all() -> None:
             log.info("Content loop enabled")
         except Exception as e:
             log.warning("Content disabled: %s", e)
+    # Синхронизация с МойСклад каждые 6 часов
+    if settings.moysklad_token:
+        try:
+            from app.services import moysklad as moysklad_svc
+
+            tasks.append(asyncio.create_task(moysklad_svc.sync_loop()))
+            log.info("Moysklad sync enabled")
+        except Exception as e:
+            log.warning("Moysklad sync disabled: %s", e)
     try:
         await asyncio.gather(*tasks)
     finally:
