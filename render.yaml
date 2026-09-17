@@ -32,7 +32,7 @@ services:
       - key: MOYSKLAD_TOKEN
         sync: false
       - key: RUN_BOTS
-        value: "true"
+        value: "false"
 databases:
   - name: normwear-db
     plan: free

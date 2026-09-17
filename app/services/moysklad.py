@@ -18,7 +18,7 @@ class MoyskladClient:
     """Клиент для работы с API МойСклад"""
 
     def __init__(self):
-        self.base_url = "https://online.moysklad.ru/api/remap/1.2"
+        self.base_url = "https://api.moysklad.ru/api/remap/1.2"
         self.token = settings.moysklad_token
         self.client = httpx.AsyncClient(
             headers={
@@ -35,7 +35,6 @@ class MoyskladClient:
             response = await self.client.get(
                 f"{self.base_url}/entity/assortment",
                 params={
-                    "stockMode": "all",
                     "limit": limit,
                     "offset": offset,
                 },
@@ -113,35 +112,34 @@ class MoyskladClient:
                     # Код товара (ID в МойСклад)
                     external_id = item.get("id", "")
 
-                    # Расчёт розничной цены с наценкой
-                    retail = retail_price(supplier_price)
+                    # Расчёт розничной цены с наценкой из настроек
+                    retail = retail_price(supplier_price, settings.default_margin_pct)
 
-                    # Поиск существующего товара
+                    # Поиск существующего товара: сначала по артикулу поставщика,
+                    # потом по внешнему ID (UUID МойСклада). Совпадение по UUID без
+                    # артикула НЕ трогаем во избежание дублей чужих позиций.
                     existing = None
-                    if external_id:
-                        existing = await s.execute(
-                            select(Product).where(Product.article == external_id)
-                        )
-                        existing = existing.scalar_one_or_none()
+                    ms_article = (item.get("article", "") or "").strip()
+                    if ms_article:
+                        existing = (
+                            await s.execute(select(Product).where(Product.article == ms_article))
+                        ).scalar_one_or_none()
+                    if existing is None and external_id:
+                        existing = (
+                            await s.execute(select(Product).where(Product.article == external_id))
+                        ).scalar_one_or_none()
 
                     if existing:
-                        # Обновление существующего
-                        existing.title = product_name
+                        # Обновление существующего: только цены и остаток.
+                        # Название/описание/статус не трогаем — их ведёт модерация.
                         existing.supplier_price = supplier_price
                         existing.retail_price = retail
                         existing.stock = int(stock)
-                        existing.description = description
-                        existing.updated_at = utcnow()
-
-                        # Статус по наличию
-                        if stock > 0:
-                            existing.status = "published"
-                        else:
-                            existing.status = "pending"
 
                         updated += 1
                     else:
-                        # Создание нового товара
+                        # Создание нового товара — всегда на модерацию (pending):
+                        # без фото и проверки публиковать в витрину нельзя.
                         # Определение бренда из названия
                         brand = self._extract_brand(product_name)
                         brand_obj = await self._get_or_create_brand(s, brand)
@@ -159,7 +157,7 @@ class MoyskladClient:
                             description=description,
                             brand_id=brand_obj.id if brand_obj else None,
                             category_id=category_obj.id if category_obj else None,
-                            status="published" if stock > 0 else "pending",
+                            status="pending",
                             photo_mode="moysklad",
                         )
                         s.add(new_product)
