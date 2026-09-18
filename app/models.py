@@ -122,6 +122,7 @@ class Order(Base):
     address: Mapped[str] = mapped_column(String(255), default="")
     tracking_number: Mapped[str | None] = mapped_column(String(64))
     comment: Mapped[str | None] = mapped_column(Text)
+    supplier_notified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

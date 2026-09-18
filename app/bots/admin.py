@@ -230,6 +230,18 @@ async def cb_watcher_status(cb: CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data.startswith("supplier_"))
+async def cb_supplier_response(cb: CallbackQuery):
+    """Обработка ответов поставщика"""
+    from app.services.supplier_orders import SupplierOrderSender
+
+    sender = SupplierOrderSender(cb.bot)
+    result = await sender.handle_supplier_response(cb.data, cb.from_user.id)
+
+    await cb.message.answer(result)
+    await cb.answer()
+
+
 async def send_orders_list(target: Message):
     async with SessionMaker() as s:
         ords = (

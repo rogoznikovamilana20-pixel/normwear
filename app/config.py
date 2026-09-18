@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     vk_group_id: int | None = None
 
     moysklad_token: str | None = None
+    supplier_telegram_id: int | None = None
 
     yandex_public_key: str = "https://disk.yandex.ru/d/e4YGRLhebhBoVA"
     run_bots: bool = True

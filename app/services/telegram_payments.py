@@ -110,6 +110,17 @@ async def handle_successful_payment(successful_payment: SuccessfulPayment, bot: 
                 except Exception as e:
                     log.error("Ошибка отправки уведомления админу %s: %s", admin_id, e)
 
+        # Автоматически отправляем заказ поставщику
+        if settings.supplier_telegram_id:
+            try:
+                from app.services.supplier_orders import SupplierOrderSender
+
+                sender = SupplierOrderSender(bot)
+                await sender.send_order_to_supplier(order_id)
+                log.info("Заказ %s автоматически отправлен поставщику", order_id)
+            except Exception as e:
+                log.error("Ошибка автоматической отправки заказ поставщику: %s", e)
+
     except Exception as e:
         log.error("Ошибка обработки успешной оплаты: %s", e)
 
