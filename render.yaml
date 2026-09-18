@@ -31,6 +31,12 @@ services:
         sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: CURRENCY
+        value: RUB
+      - key: SBP_PROVIDER
+        value: manual
+      - key: AUTO_PUBLISH
+        value: true
       - key: SHOP_CHANNEL_USERNAME
         value: normwear_shop
       - key: SHOP_USERNAME
@@ -46,7 +52,7 @@ services:
       - key: SUPPLIER_TELEGRAM_ID
         sync: false
       - key: RUN_BOTS
-        value: "true"
+        value: "false"
 databases:
   - name: normwear-db
     plan: free
