@@ -17,6 +17,18 @@ services:
         sync: false
       - key: SHOP_CHANNEL_ID
         sync: false
+      - key: SHOP_CHANNEL_USERNAME
+        value: normwear_shop
+      - key: SHOP_USERNAME
+        value: norm_shop_bot
+      - key: SUPPLIER_CHANNEL_USERNAME
+        value: optobaza
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: SUPPLIER_SESSION_STRING
+        sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
       - key: SHOP_CHANNEL_USERNAME
@@ -31,8 +43,10 @@ services:
         value: https://disk.yandex.ru/d/e4YGRLhebhBoVA
       - key: MOYSKLAD_TOKEN
         sync: false
+      - key: SUPPLIER_TELEGRAM_ID
+        sync: false
       - key: RUN_BOTS
-        value: "false"
+        value: "true"
 databases:
   - name: normwear-db
     plan: free
