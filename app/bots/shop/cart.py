@@ -3,7 +3,7 @@ import html
 from aiogram import F
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, PreCheckoutQuery, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, PreCheckoutQuery, ReplyKeyboardMarkup, WebAppInfo, SuccessfulPayment
 from sqlalchemy import func, select
 
 from app.config import get_settings
@@ -11,6 +11,7 @@ from app.db import SessionMaker
 from app.models import BoxSubscription, Brand, CartItem, FortuneSpin, Order, Payment, Product, ProductPhoto, PromoCode, SupportMessage, SupportTicket, User
 from app.services import notify, orders
 from app.services.photos import yandex_library
+from app.services.telegram_payments import create_invoice, handle_pre_checkout_query, handle_successful_payment
 from app.bots.shop import Checkout, MENU, ReviewFSM, WELCOME, cancel_kb, main_menu, menu_inline, miniapp_available, pending_review, router, send_menu, settings
 
 async def render_cart(target: Message, user_id: int):
@@ -27,7 +28,7 @@ async def render_cart(target: Message, user_id: int):
         label = p.title[:28] + (f" · {ci.size}" if ci.size else "")
         lines.append(f"• {html.escape(label)} — {price} ₽")
         rows.append([InlineKeyboardButton(text=f"🗑 {label}", callback_data=f"ci:{ci.id}:del")])
-    lines += ["", f"<b>Итого: {subtotal} ₽</b>", "", "💳 Оплата после подтверждения заказа менеджером\n🚚 Доставка 2–4 дня"]
+    lines += ["", f"<b>Итого: {subtotal} ₽</b>", "", "💳 Оплата через Telegram (автоматически) или СБП (менеджер)\n🚚 Доставка 2–4 дня"]
     rows.append([InlineKeyboardButton(text="✅ Оформить заказ", callback_data="chk")])
     rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="home")])
     await target.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -38,6 +39,27 @@ async def run_get_cart(user_id: int):
         return await orders.get_cart(s, user_id)
 
 
+@router.pre_checkout_query()
+async def pre_checkout_query_handler(pre_checkout_query: PreCheckoutQuery):
+    """Обработка предварительного запроса на оплату"""
+    await handle_pre_checkout_query(pre_checkout_query, pre_checkout_query.bot)
+
+
+@router.callback_query(F.data.startswith("sbp:"))
+async def cb_sbp_payment(cb: CallbackQuery):
+    """Выбор оплаты через СБП (менеджер)"""
+    order_id = int(cb.data.split(":")[1])
+
+    async with SessionMaker() as s:
+        order = await s.get(Order, order_id)
+        if order:
+            order.status = "awaiting_payment"
+            await s.commit()
+
+    await cb.message.answer("💵 Выбрана оплата через СБП\n\nМенеджер пришлёт реквизиты в ближайшее время", reply_markup=main_menu())
+    await cb.answer()
+
+
 @router.callback_query(StateFilter(None), F.data == "chk")
 async def cb_checkout(cb: CallbackQuery, state: FSMContext):
     async with SessionMaker() as s:
@@ -45,6 +67,41 @@ async def cb_checkout(cb: CallbackQuery, state: FSMContext):
     if cnt == 0:
         await cb.answer("Корзина пуста", show_alert=True)
         return
+
+    # Создаём заказ и предлагаем оплату через Telegram Payments
+    async with SessionMaker() as s:
+        cart_items = await orders.get_cart(s, cb.from_user.id)
+        if not cart_items:
+            await cb.answer("Корзина пуста", show_alert=True)
+            return
+
+        # Создаём заказ
+        order = await orders.create_order(s, cb.from_user.id, cart_items)
+        await s.commit()
+
+    # Проверяем доступность Telegram Payments
+    if settings.telegram_payment_provider_token:
+        # Создаём invoice для оплаты
+        invoice_url = await create_invoice(order.id, cb.bot, cb.from_user.id)
+
+        if invoice_url:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Оплатить через Telegram", url=invoice_url)],
+                    [InlineKeyboardButton(text="💵 Оплатить СБП (менеджер)", callback_data=f"sbp:{order.id}")],
+                    [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
+                ]
+            )
+            await cb.message.answer(
+                f"📦 <b>Заказ №{order.id} создан</b>\n\n"
+                f"Сумма: {order.total}₽\n\n"
+                f"Выберите способ оплаты:",
+                reply_markup=kb,
+            )
+            await cb.answer()
+            return
+
+    # Fallback на СБП если Telegram Payments не настроен
     await state.set_state(Checkout.name)
     await cb.message.answer("📦 <b>Оформление заказа</b>\n\nКак вас зовут? (имя для доставки)", reply_markup=cancel_kb())
     await cb.answer()
@@ -218,66 +275,49 @@ async def cb_cancel(cb: CallbackQuery, state: FSMContext):
 
 
 @router.pre_checkout_query()
-async def pre_checkout(query: PreCheckoutQuery):
-    # фаза 10: подтверждаем все счета, сумму проверяет Telegram
-    try:
-        await query.answer(ok=True)
-    except Exception:
-        pass
+async def pre_checkout_query_handler(pre_checkout_query: PreCheckoutQuery):
+    """Обработка предварительного запроса на оплату через новую систему"""
+    await handle_pre_checkout_query(pre_checkout_query, pre_checkout_query.bot)
 
 
-@router.message(F.successful_payment)
-async def on_successful_payment(message: Message):
+@router.message()
+async def successful_payment_handler(message: Message):
+    """Обработка успешной оплаты - объединённый хендлер"""
     pay = message.successful_payment
     if pay is None:
         return
+
     payload = (pay.invoice_payload or "")
     kind, _, ref = payload.partition(":")
-    async with SessionMaker() as s:
-        if kind == "order":
-            try:
-                oid = int(ref)
-            except ValueError:
-                return
-            order = await s.get(Order, oid)
-            if order is None or order.user_id != message.from_user.id:
-                return
-            exists = (await s.scalars(select(Payment).where(Payment.order_id == oid, Payment.status == "paid"))).first()
-            if exists is None:
-                s.add(
-                    Payment(
-                        order_id=oid,
-                        method="telegram",
-                        amount=float(pay.total_amount) / 100,
-                        status="paid",
-                        provider_ref=pay.telegram_payment_charge_id,
-                    )
-                )
-                await s.commit()
-            await message.answer(f"✅ Оплата заказа №{oid} прошла! Менеджер свяжется по доставке.", reply_markup=main_menu())
-            await notify.notify_admins(f"💰 <b>Заказ №{oid} ОПЛАЧЕН</b> ({float(pay.total_amount)/100:.0f}₽). Можно отправлять: введите трек.")
-        elif kind == "res":
-            from datetime import timedelta
 
+    # Новая система для заказов
+    if kind == "order":
+        await handle_successful_payment(pay, message.bot)
+        return
+
+    # Старая система для резерваций и BOX
+    async with SessionMaker() as s:
+        if kind == "res":
+            from datetime import timedelta
             from app.models import Reservation, utcnow
 
             try:
                 rid = int(ref)
             except ValueError:
                 return
-            async with SessionMaker() as s:
-                r = await s.get(Reservation, rid)
-                if r is None or r.user_id != message.from_user.id:
-                    return
-                r.status = "active"
-                r.expires_at = utcnow() + timedelta(hours=24)
-                await s.commit()
-                p = await s.get(Product, r.product_id)
-                title = p.title if p else f"#{r.product_id}"
+            r = await s.get(Reservation, rid)
+            if r is None or r.user_id != message.from_user.id:
+                return
+            r.status = "active"
+            r.expires_at = utcnow() + timedelta(hours=24)
+            await s.commit()
+            p = await s.get(Product, r.product_id)
+            title = p.title if p else f"#{r.product_id}"
             await message.answer(f"🔒 Бронь оплачена! Размер {r.size or '—'} ({html.escape(title)}) держу 24 часа, 199₽ пойдут в зачёт заказа.", reply_markup=main_menu())
             await notify.notify_admins(f"🔒 <b>Бронь #{rid} ОПЛАЧЕНА</b> — {html.escape(title)} · {r.size} · user <code>{r.user_id}</code>.")
+
         elif kind == "box":
-            from app.models import LoyaltyTransaction
+            from app.models import BoxSubscription, LoyaltyTransaction
 
             sub = (await s.scalars(select(BoxSubscription).where(BoxSubscription.user_id == message.from_user.id, BoxSubscription.is_active == True))).first()
             if sub is None:
