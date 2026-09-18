@@ -46,6 +46,9 @@ ADMIN_COMMANDS = [
     BotCommand(command="draw", description="Финал розыгрыша"),
     BotCommand(command="scheduled", description="Отложенные посты"),
     BotCommand(command="digest", description="Сводка магазина"),
+    BotCommand(command="parse_supplier", description="Парсинг поставщика"),
+    BotCommand(command="test_parser", description="Тест парсера"),
+    BotCommand(command="watcher_status", description="Статус watcher'а"),
 ]
 
 

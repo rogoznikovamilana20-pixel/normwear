@@ -64,12 +64,20 @@ async def cmd_admin(message: Message, state: FSMContext):
         inline_keyboard=[
             [InlineKeyboardButton(text="📦 Заказы", callback_data="orders"), InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
             [InlineKeyboardButton(text="🗂 На модерации", callback_data="pending")],
+            [InlineKeyboardButton(text="🔄 Парсить поставщика", callback_data="parse_supplier"), InlineKeyboardButton(text="📡 Статус watcher'а", callback_data="watcher_status")],
         ]
     )
     await message.answer(
         "🛠 <b>Админ-панель NORMWEAR</b>\n\n"
         f"📩 Просто перешлите пост из @{settings.supplier_channel_username} в этот чат — бот распарсит товар и покажет карточку.\n\n"
-        "Команды: /orders — заказы · /promo CODE PERCENT [MIN] [MAXUSES] — промокод · /draw — финал розыгрыша · /digest — сводка",
+        "Команды:\n"
+        "/orders — заказы\n"
+        "/parse_supplier — парсинг поставщика\n"
+        "/test_parser — тест парсера\n"
+        "/watcher_status — статус watcher'а\n"
+        "/promo CODE PERCENT [MIN] [MAXUSES] — промокод\n"
+        "/draw — финал розыгрыша\n"
+        "/digest — сводка",
         reply_markup=kb,
     )
 
@@ -79,9 +87,146 @@ async def cmd_orders(message: Message):
     await send_orders_list(message)
 
 
+@router.message(Command("parse_supplier"))
+async def cmd_parse_supplier(message: Message):
+    """Парсинг товаров с публичной страницы поставщика"""
+    supplier_url = "https://b2b.moysklad.ru/public/oWXBoG49bkuB"
+
+    await message.answer("🔄 Начинаю парсинг товаров с поставщика...")
+
+    try:
+        from app.services.supplier_parser import parse_supplier
+
+        count = await parse_supplier(supplier_url)
+
+        if count > 0:
+            await message.answer(f"✅ Успешно распарсено и добавлено {count} товаров с наценкой 35%")
+        else:
+            await message.answer("⚠️ Не удалось распарсить товары. Проверьте ссылку поставщика.")
+
+    except ImportError:
+        await message.answer("❌ Playwright не установлен. Установите: pip install playwright && playwright install chromium")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка парсинга: {str(e)}")
+
+
+@router.message(Command("test_parser"))
+async def cmd_test_parser(message: Message):
+    """Тестирование парсера товаров"""
+    test_text = """Nike Dunk Low
+Размеры: 40 41 42 43
+Цена: 7500 руб
+В наличии: 3 шт
+Артикул: NK123"""
+
+    from app.services.parser import parse_product
+
+    parsed = parse_product(test_text, known_brands=sorted(known_brands))
+
+    if parsed:
+        await message.answer(
+            f"✅ Парсер работает!\n\n"
+            f"📦 Товар: {parsed.title}\n"
+            f"🏷️ Бренд: {parsed.brand or 'Не определён'}\n"
+            f"💰 Цена поставщика: {parsed.supplier_price}₽\n"
+            f"📏 Размеры: {', '.join(parsed.sizes) if parsed.sizes else 'Нет'}\n"
+            f"📦 Остаток: {parsed.stock} шт\n"
+            f"🏷️ Артикул: {parsed.article or 'Нет'}\n"
+            f"📂 Категория: {parsed.category or 'Не определена'}"
+        )
+    else:
+        await message.answer("❌ Парсер не смог распознать товар")
+
+
+@router.message(Command("watcher_status"))
+async def cmd_watcher_status(message: Message):
+    """Проверка статуса watcher'а канала поставщика"""
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    status_text = f"📊 <b>Статус Watcher'а канала поставщика</b>\n\n"
+
+    # Проверка настроек
+    if settings.telegram_api_id and settings.telegram_api_hash and settings.supplier_session_string:
+        status_text += "✅ Настройки Telethon: настроены\n"
+    else:
+        status_text += "❌ Настройки Telethon: не настроены\n"
+
+    if settings.supplier_channel_username:
+        status_text += f"✅ Канал поставщика: @{settings.supplier_channel_username}\n"
+    else:
+        status_text += "❌ Канал поставщика: не настроен\n"
+
+    # Проверка активности
+    status_text += f"\n📡 Канал: @{settings.supplier_channel_username}\n"
+    status_text += f"🔑 API ID: {settings.telegram_api_id}\n"
+    status_text += f"📱 Сессия: {'Активна' if settings.supplier_session_string else 'Не настроена'}\n"
+
+    status_text += "\n\n💡 Для ручного тестирования перешли пост из канала в этот чат"
+
+    await message.answer(status_text)
+
+
 @router.callback_query(F.data == "orders")
 async def cb_orders(cb: CallbackQuery):
     await send_orders_list(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "parse_supplier")
+async def cb_parse_supplier(cb: CallbackQuery):
+    """Парсинг товаров с публичной страницы поставщика"""
+    supplier_url = "https://b2b.moysklad.ru/public/oWXBoG49bkuB"
+
+    await cb.message.answer("🔄 Начинаю парсинг товаров с поставщика...")
+
+    try:
+        from app.services.supplier_parser import parse_supplier
+
+        count = await parse_supplier(supplier_url)
+
+        if count > 0:
+            await cb.message.answer(f"✅ Успешно распарсено и добавлено {count} товаров с наценкой 35%")
+        else:
+            await cb.message.answer("⚠️ Не удалось распарсить товары. Проверьте ссылку поставщика.")
+
+    except ImportError:
+        await cb.message.answer("❌ Playwright не установлен. Установите: pip install playwright && playwright install chromium")
+    except Exception as e:
+        await cb.message.answer(f"❌ Ошибка парсинга: {str(e)}")
+
+    await cb.answer()
+
+
+@router.callback_query(F.data == "watcher_status")
+async def cb_watcher_status(cb: CallbackQuery):
+    """Проверка статуса watcher'а канала поставщика"""
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    status_text = f"📊 <b>Статус Watcher'а канала поставщика</b>\n\n"
+
+    # Проверка настроек
+    if settings.telegram_api_id and settings.telegram_api_hash and settings.supplier_session_string:
+        status_text += "✅ Настройки Telethon: настроены\n"
+    else:
+        status_text += "❌ Настройки Telethon: не настроены\n"
+
+    if settings.supplier_channel_username:
+        status_text += f"✅ Канал поставщика: @{settings.supplier_channel_username}\n"
+    else:
+        status_text += "❌ Канал поставщика: не настроен\n"
+
+    # Проверка активности
+    status_text += f"\n📡 Канал: @{settings.supplier_channel_username}\n"
+    status_text += f"🔑 API ID: {settings.telegram_api_id}\n"
+    status_text += f"📱 Сессия: {'Активна' if settings.supplier_session_string else 'Не настроена'}\n"
+
+    status_text += "\n\n💡 Для ручного тестирования перешли пост из канала в этот чат"
+
+    await cb.message.answer(status_text)
     await cb.answer()
 
 

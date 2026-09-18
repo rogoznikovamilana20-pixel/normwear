@@ -44,6 +44,35 @@ BASE_BRANDS = {
     "timberland": "Timberland",
     "dr.martens": "Dr. Martens",
     "crocs": "Crocs",
+    # Дополнительные бренды для стритвира
+    "supreme": "Supreme",
+    "palace": "Palace",
+    "kith": "Kith",
+    "fear of god": "Fear of God",
+    "essentials": "Essentials",
+    "anti social social club": "Anti Social Social Club",
+    "billionaire boys club": "Billionaire Boys Club",
+    "a bathing ape": "A Bathing Ape",
+    "chrome hearts": "Chrome Hearts",
+    "mastermind": "Mastermind",
+    "cdg": "CDG",
+    "comme des garcons": "Comme des Garcons",
+    "maison margiela": "Maison Margiela",
+    "vetements": "Vetements",
+    "balenciaga": "Balenciaga",
+    "gucci": "Gucci",
+    "prada": "Prada",
+    "versace": "Versace",
+    "givenchy": "Givenchy",
+    "hermes": "Hermes",
+    "louis vuitton": "Louis Vuitton",
+    "chanel": "Chanel",
+    "dior": "Dior",
+    "fendi": "Fendi",
+    "bottega veneta": "Bottega Veneta",
+    "valentino": "Valentino",
+    "burbery": "Burberry",
+    "y-3": "Y-3",
 }
 
 
@@ -103,20 +132,26 @@ def detect_brand(text: str, known_brands=None) -> str | None:
 
 def infer_category(title: str, text: str) -> str:
     t = f"{title} {text}".lower()
-    if any(x in t for x in ("\u043a\u0440\u043e\u0441\u0441\u043e\u0432", "sneaker", "dunk", "jordan", "campus")):
+    if any(x in t for x in ("\u043a\u0440\u043e\u0441\u0441\u043e\u0432", "sneaker", "dunk", "jordan", "campus", "air force", "yeezy")):
         return "\u041a\u0440\u043e\u0441\u0441\u043e\u0432\u043a\u0438"
-    if any(x in t for x in ("\u0445\u0443\u0434\u0438", "hoodie", "\u0441\u0432\u0438\u0442\u0448\u043e\u0442")):
+    if any(x in t for x in ("\u0445\u0443\u0434\u0438", "hoodie", "\u0441\u0432\u0438\u0442\u0448\u043e\u0442", "sweatshirt")):
         return "\u041e\u0434\u0435\u0436\u0434\u0430"
-    if any(x in t for x in ("\u043a\u0443\u0440\u0442\u043a", "jacket", "\u0431\u043e\u043c\u0431\u0435\u0440", "\u043f\u0443\u0445\u043e\u0432\u0438\u043a")):
+    if any(x in t for x in ("\u043b\u043e\u043d\u0433\u0441\u043b\u0438\u0432", "longsleeve", "long sleeve")):
+        return "\u041b\u043e\u043d\u0433\u0441\u043b\u0438\u0432\u044b"
+    if any(x in t for x in ("\u043a\u0443\u0440\u0442\u043a", "jacket", "\u0431\u043e\u043c\u0431\u0435\u0440", "\u043f\u0443\u0445\u043e\u0432\u0438\u043a", "windbreaker")):
         return "\u0412\u0435\u0440\u0445\u043d\u044f\u044f \u043e\u0434\u0435\u0436\u0434\u0430"
-    if any(x in t for x in ("\u0444\u0443\u0442\u0431\u043e\u043b\u043a", "tee", "t-shirt")):
+    if any(x in t for x in ("\u0444\u0443\u0442\u0431\u043e\u043b\u043a", "tee", "t-shirt", "tshirt")):
         return "\u0424\u0443\u0442\u0431\u043e\u043b\u043a\u0438"
-    if any(x in t for x in ("\u0448\u0442\u0430\u043d\u044b", "\u0431\u0440\u044e\u043a\u0438", "cargo", "\u0434\u0436\u043e\u0433\u0433\u0435\u0440\u044b", "\u0448\u043e\u0440\u0442\u044b")):
+    if any(x in t for x in ("\u0448\u0442\u0430\u043d\u044b", "\u0431\u0440\u044e\u043a\u0438", "cargo", "\u0434\u0436\u0438\u043d\u0441\u044b", "\u0431\u0435\u0440\u043c\u0443\u0434\u044b", "shorts")):
         return "\u0428\u0442\u0430\u043d\u044b"
-    if any(x in t for x in ("\u0448\u0430\u043f\u043a", "beanie", "\u043a\u0435\u043f\u043a")):
+    if any(x in t for x in ("\u0448\u0430\u043f\u043a\u0430", "beanie", "\u043a\u0435\u043f\u043a\u0430", "cap")):
         return "\u0413\u043e\u043b\u043e\u0432\u043d\u044b\u0435 \u0443\u0431\u043e\u0440\u044b"
-    if any(x in t for x in ("\u0441\u0443\u043c\u043a", "bag", "backpack")):
+    if any(x in t for x in ("\u0441\u0443\u043c\u043a\u0430", "bag", "backpack", "ryukzak")):
         return "\u0421\u0443\u043c\u043a\u0438"
+    if any(x in t for x in ("\u0440\u0443\u0431\u0430\u0448\u043a\u0430", "hoodie", "pullover")):
+        return "\u0420\u0443\u0431\u0430\u0448\u043a\u0438"
+    if any(x in t for x in ("\u043f\u0438\u0434\u0436\u0430\u043c\u0430\u043a", "pants", "trousers")):
+        return "\u0411\u0440\u044e\u043a\u0438"
     return "\u0414\u0440\u0443\u0433\u043e\u0435"
 
 
